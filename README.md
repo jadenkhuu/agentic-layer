@@ -4,8 +4,8 @@ Orchestrator for **Claude Agent SDK** workflows. A workflow is an ordered list
 of *agents* (each a `claude_agent_sdk.query()` invocation) that hand off to one
 another via files in a run-scoped working directory.
 
-The stage-2 release ships a working **`feature` workflow** — six agents that
-take a task description through spec → explore → implement → test → review → PR.
+Three workflows ship out of the box — `feature`, `bugfix`, `docs` — and you
+can author your own (see [Authoring a workflow](#authoring-a-workflow)).
 
 ## Install
 
@@ -104,7 +104,40 @@ agentic run feature --task "anything" --stub
 
 This is the mode the integration tests run in.
 
-## The `feature` workflow
+## How workflows work
+
+A workflow is a YAML file in `.agentic/workflows/` describing an ordered list
+of agents. Each agent has:
+
+- a **prompt file** at `.agentic/prompts/<id>.md` (the system prompt for that
+  agent's SDK call),
+- **inputs** — names of upstream artifacts it reads,
+- **outputs** — names of files it MUST write to the run's working directory,
+- **allowed_tools** — the subset of SDK tools the agent may invoke
+  (`Read`, `Write`, `Edit`, `Bash`, `Grep`, `Glob`).
+
+When you run a workflow, the runner:
+
+1. Creates a per-run working directory at `.agentic/runs/<run-id>/`.
+2. For each agent, in order:
+   - Renders the prompt by substituting `{{TAG}}` placeholders for inputs and
+     outputs (see [Input semantics](#input-semantics)).
+   - Invokes the Claude Agent SDK with that prompt and the agent's
+     `allowed_tools`.
+   - Verifies every declared output file exists; halts if not.
+3. The next agent runs with the previous agent's output files available
+   as inputs.
+
+Agents talk to each other **only through files** in the working directory.
+That's the entire handoff mechanism — no shared memory, no in-process state.
+Each agent is a fresh `claude_agent_sdk.query()` invocation.
+
+## Built-in workflows
+
+`agentic init` scaffolds these three into `.agentic/workflows/`. Edit or
+delete any of them — they version with your project.
+
+### `feature` — spec → explore → implement → test → review → PR
 
 | Agent | Reads | Writes | What it does |
 |---|---|---|---|
@@ -115,8 +148,25 @@ This is the mode the integration tests run in.
 | `review` | `CHANGES.md` + `git diff` | `REVIEW.md` | Severity-ordered concerns. Read-only. |
 | `pr` | `SPEC.md`, `CHANGES.md`, `TEST_NOTES.md`, `REVIEW.md` | `PR_BODY.md` | Compose PR body, `git push`, `gh pr create`. |
 
-Each agent's prompt lives at `.agentic/prompts/<id>.md`. Edit them to taste —
-they're scaffolded into your repo so they version with your project.
+### `bugfix` — adds a `repro` stage before the fix
+
+Seven agents: `spec → explore → repro → fix → test → review → pr`. The
+`repro` agent writes a failing test that captures the bug *before* `fix`
+touches code, so the fix is anchored to a concrete regression test.
+
+```bash
+agentic run bugfix --task "duplicate emails sent when retry kicks in"
+agentic run bugfix --issue 481
+```
+
+### `docs` — no code, no tests
+
+Five agents: `spec → explore → docs → review → pr`. The `review` stage
+checks clarity and accuracy instead of code correctness.
+
+```bash
+agentic run docs --task "document the new --stub flag in SETUP.md"
+```
 
 ## Watching a run
 
@@ -178,6 +228,96 @@ Event types: `run.start`, `run.complete`, `agent.start`, `agent.complete`,
 | `agentic watch [<run-id>] [--list]` | Open the run viewer TUI, or print the run table with `--list`. |
 | `agentic logs <run-id>` | Print `.agentic/runs/<run-id>/run.log`. |
 | `agentic init` | Scaffold `.agentic/workflows/`, `.agentic/prompts/`, and `.agentic/.gitignore`. |
+
+## Authoring a workflow
+
+A workflow is two things: a YAML file in `.agentic/workflows/` and one prompt
+file per agent in `.agentic/prompts/`. To add one:
+
+1. **Drop a YAML in `.agentic/workflows/<name>.yaml`** describing the agents
+   (schema below).
+2. **Write each prompt** at the `prompt_file` path declared by the agent.
+   Use `{{TAG}}` placeholders for inputs and outputs.
+3. **Run it:** `agentic run <name> --task "..."`.
+4. **Iterate with `--stub`:** `agentic run <name> --task "x" --stub` validates
+   the wiring (substitution, output declarations, ordering) without any SDK
+   calls.
+
+### Example: a `refactor` workflow
+
+`.agentic/workflows/refactor.yaml`:
+
+```yaml
+name: refactor
+description: Identify a refactor target → propose a plan → apply → verify tests still pass.
+
+agents:
+  - id: target
+    prompt_file: prompts/refactor_target.md
+    inputs: [task]
+    outputs: [TARGET.md]
+    allowed_tools: [Read, Grep, Glob, Bash, Write]
+    mcp_servers: []
+    sub_agents: []
+
+  - id: plan
+    prompt_file: prompts/refactor_plan.md
+    inputs: [TARGET.md]
+    outputs: [PLAN.md]
+    allowed_tools: [Read, Write]
+    mcp_servers: []
+    sub_agents: []
+
+  - id: apply
+    prompt_file: prompts/refactor_apply.md
+    inputs: [PLAN.md, TARGET.md]
+    outputs: [CHANGES.md]
+    allowed_tools: [Read, Write, Edit, Bash]
+    mcp_servers: []
+    sub_agents: []
+
+  - id: verify
+    prompt_file: prompts/refactor_verify.md
+    inputs: [CHANGES.md]
+    outputs: [VERIFY.md]
+    allowed_tools: [Read, Bash, Write]
+    mcp_servers: []
+    sub_agents: []
+```
+
+`.agentic/prompts/refactor_target.md` (sketch):
+
+```markdown
+You are the `target` agent in a refactor workflow.
+
+The task from the user:
+
+{{TASK}}
+
+Locate the smallest concrete refactor target that satisfies the task. Read
+files freely. Do NOT modify code.
+
+Write your output to {{OUTPUT}} with sections: Target, Why, Risks, Out of scope.
+```
+
+Then:
+
+```bash
+agentic run refactor --task "extract the auth env-var parsing into a helper" --stub  # wiring check
+agentic run refactor --task "extract the auth env-var parsing into a helper"         # real run
+```
+
+### Design tips
+
+- **Keep each agent narrow.** One artifact in, one artifact out. If an agent's
+  job spans two distinct outputs, split it.
+- **Read-only agents** (explore, review) should not list `Edit` or `Write` on
+  source — restrict `allowed_tools` to enforce it.
+- **Branch + PR stages** require `Bash` (for `git`/`gh`). Most other agents
+  don't.
+- The first input is loaded *inline* into the prompt; later inputs are passed
+  as paths the agent reads on demand. Put the most context-critical artifact
+  first.
 
 ## Workflow YAML schema
 
@@ -244,4 +384,3 @@ pytest -v
 path, failure halting, output verification, full feature-workflow integration
 against a real git repo (branch creation, dirty-tree refusal, branch-from-HEAD,
 working dir persists after failure). No SDK calls in CI.
-# agentic-layer
