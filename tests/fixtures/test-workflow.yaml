@@ -1,0 +1,17 @@
+name: test-workflow
+description: Three stub agents demonstrating the pipeline handoff.
+agents:
+  - id: spec
+    inputs: [task]
+    outputs: [SPEC.md]
+    allowed_tools: [Read, Write]
+
+  - id: explore
+    inputs: [SPEC.md]
+    outputs: [CONTEXT.md]
+    allowed_tools: [Read, Grep, Glob]
+
+  - id: plan
+    inputs: [SPEC.md, CONTEXT.md]
+    outputs: [PLAN.md]
+    allowed_tools: [Read, Write]

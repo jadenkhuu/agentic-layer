@@ -1,0 +1,59 @@
+name: bugfix
+description: Bug report → spec → explore → repro → fix → test → review → PR. Seven-agent pipeline that writes a failing test first, then ships the minimal fix.
+
+agents:
+  - id: spec
+    prompt_file: prompts/spec.md
+    inputs: [task]
+    outputs: [SPEC.md]
+    allowed_tools: [Read, Write]
+    mcp_servers: []
+    sub_agents: []
+
+  - id: explore
+    prompt_file: prompts/explore.md
+    inputs: [SPEC.md]
+    outputs: [CONTEXT.md]
+    allowed_tools: [Read, Grep, Glob, Bash, Write]
+    mcp_servers: []
+    sub_agents: []
+
+  - id: repro
+    prompt_file: prompts/repro.md
+    inputs: [SPEC.md, CONTEXT.md]
+    outputs: [REPRO.md]
+    allowed_tools: [Read, Write, Edit, Bash]
+    mcp_servers: []
+    sub_agents: []
+
+  - id: fix
+    prompt_file: prompts/fix.md
+    inputs: [SPEC.md, CONTEXT.md, REPRO.md]
+    outputs: [CHANGES.md]
+    allowed_tools: [Read, Write, Edit, Bash]
+    mcp_servers: []
+    sub_agents: []
+
+  - id: test
+    prompt_file: prompts/test.md
+    inputs: [CHANGES.md]
+    outputs: [TEST_NOTES.md]
+    allowed_tools: [Read, Write, Edit, Bash]
+    mcp_servers: []
+    sub_agents: []
+
+  - id: review
+    prompt_file: prompts/review.md
+    inputs: [CHANGES.md]
+    outputs: [REVIEW.md]
+    allowed_tools: [Read, Bash, Write]
+    mcp_servers: []
+    sub_agents: []
+
+  - id: pr
+    prompt_file: prompts/pr.md
+    inputs: [SPEC.md, CHANGES.md, TEST_NOTES.md, REVIEW.md]
+    outputs: [PR_BODY.md]
+    allowed_tools: [Read, Write, Bash]
+    mcp_servers: []
+    sub_agents: []

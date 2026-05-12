@@ -1,0 +1,43 @@
+name: docs
+description: Docs request → spec → explore → write → review → PR. Five-agent pipeline for documentation changes (no test stage; clarity/accuracy review instead of code review).
+
+agents:
+  - id: spec
+    prompt_file: prompts/spec.md
+    inputs: [task]
+    outputs: [SPEC.md]
+    allowed_tools: [Read, Write]
+    mcp_servers: []
+    sub_agents: []
+
+  - id: explore
+    prompt_file: prompts/explore.md
+    inputs: [SPEC.md]
+    outputs: [CONTEXT.md]
+    allowed_tools: [Read, Grep, Glob, Bash, Write]
+    mcp_servers: []
+    sub_agents: []
+
+  - id: docs
+    prompt_file: prompts/docs.md
+    inputs: [SPEC.md, CONTEXT.md]
+    outputs: [CHANGES.md]
+    allowed_tools: [Read, Write, Edit, Bash]
+    mcp_servers: []
+    sub_agents: []
+
+  - id: review
+    prompt_file: prompts/docs_review.md
+    inputs: [CHANGES.md]
+    outputs: [REVIEW.md]
+    allowed_tools: [Read, Bash, Write]
+    mcp_servers: []
+    sub_agents: []
+
+  - id: pr
+    prompt_file: prompts/pr_docs.md
+    inputs: [SPEC.md, CHANGES.md, REVIEW.md]
+    outputs: [PR_BODY.md]
+    allowed_tools: [Read, Write, Bash]
+    mcp_servers: []
+    sub_agents: []
