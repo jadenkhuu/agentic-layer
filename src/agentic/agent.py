@@ -11,6 +11,7 @@ from rich.console import Console
 
 from agentic.context import RunContext
 from agentic.events import serialize_tool_input, serialize_tool_result
+from agentic.mcp import resolve_for_agent
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -26,6 +27,13 @@ class AgentSpec(BaseModel):
     allowed_tools: list[str] = Field(default_factory=list)
     mcp_servers: list[str] = Field(default_factory=list)
     sub_agents: list[str] = Field(default_factory=list)
+    # human-in-the-loop checkpoint — runner halts after this agent and persists
+    # state so an operator can review (and `agentic resume <run-id>`).
+    pause_after: bool = False
+    # optional shell commands the runner executes around this agent. failures
+    # halt the run with a clear error and the script's tail in events.jsonl.
+    pre: str | None = None
+    post: str | None = None
 
 
 def run_agent(spec: AgentSpec, ctx: RunContext) -> None:
@@ -93,11 +101,8 @@ async def _run_real(spec: AgentSpec, ctx: RunContext) -> None:
         )
     prompt_text = _substitute(prompt_text, spec, ctx)
 
-    if spec.mcp_servers:
-        raise NotImplementedError(
-            f"agent {spec.id}: mcp_servers wiring not yet implemented "
-            "(workflow YAML uses list[str]; SDK expects dict[str, McpServerConfig])"
-        )
+    mcp_dict = _resolve_mcp_for_agent(spec, ctx)
+
     if spec.sub_agents:
         raise NotImplementedError(
             f"agent {spec.id}: sub_agents wiring not yet implemented "
@@ -107,6 +112,7 @@ async def _run_real(spec: AgentSpec, ctx: RunContext) -> None:
     options = ClaudeAgentOptions(
         allowed_tools=spec.allowed_tools,
         cwd=str(ctx.target_repo_path),
+        mcp_servers=mcp_dict if mcp_dict else None,
     )
 
     logger.info(
@@ -146,6 +152,16 @@ async def _run_real(spec: AgentSpec, ctx: RunContext) -> None:
                     f"agent {spec.id}: SDK reported error "
                     f"(stop_reason={message.stop_reason})"
                 )
+
+
+def _resolve_mcp_for_agent(spec: AgentSpec, ctx: RunContext) -> dict[str, Any]:
+    """Look up the workflow's MCP server specs (stashed on ctx by the runner)
+    and build the SDK dict for the names this agent opted into.
+    """
+    if not spec.mcp_servers:
+        return {}
+    workflow_servers = getattr(ctx, "workflow_mcp_servers", None) or []
+    return resolve_for_agent(spec.mcp_servers, workflow_servers)
 
 
 def _emit_tool_use(agent_id: str, block: Any, ctx: RunContext) -> None:

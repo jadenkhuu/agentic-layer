@@ -1,0 +1,20 @@
+name: filesystem-mcp
+description: Example demonstrating MCP wiring. Uses the official filesystem MCP server (no auth required) to let an agent enumerate the target repo and write a summary.
+
+mcp_servers:
+  - name: filesystem
+    type: stdio
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-filesystem"
+      - "."
+
+agents:
+  - id: explore
+    prompt_file: prompts/mcp_filesystem.md
+    inputs: [task]
+    outputs: [REPO_OVERVIEW.md]
+    allowed_tools: [Read, Write]
+    mcp_servers: [filesystem]
+    sub_agents: []

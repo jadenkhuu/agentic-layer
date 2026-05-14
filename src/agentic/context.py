@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from agentic.events import EventEmitter
+from agentic.mcp import MCPServerSpec
 
 
 def _new_run_id() -> str:
@@ -29,6 +30,13 @@ class RunContext(BaseModel):
     branch: str | None = None
     base_branch: str | None = None  # branch HEAD was on before the agentic branch was created
     events: EventEmitter = Field(default_factory=lambda: EventEmitter(None))
+    # populated by the runner before agents fire — agent.py looks here to
+    # resolve the MCP servers an agent opted into.
+    workflow_mcp_servers: list[MCPServerSpec] = Field(default_factory=list)
+    # populated when --client is in effect; agent.py prepends this string
+    # (and the runner echoes the name into events for the UI).
+    client_name: str | None = None
+    client_prefix: str = ""
 
     @classmethod
     def create(

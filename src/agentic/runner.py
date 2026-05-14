@@ -38,6 +38,10 @@ def run_workflow(workflow: Workflow, ctx: RunContext) -> RunContext:
 
     _maybe_prepare_branch(ctx)
 
+    # carry workflow-level MCP servers onto the ctx so agent.py can resolve
+    # the names each agent opted into without re-loading the workflow.
+    ctx.workflow_mcp_servers = list(workflow.mcp_servers)
+
     # Emitter is wired up only after auth + branch checks pass — refused runs
     # leave no events.jsonl behind.
     ctx.events = EventEmitter(ctx.working_dir / "events.jsonl")

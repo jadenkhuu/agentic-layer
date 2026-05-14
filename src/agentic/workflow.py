@@ -3,15 +3,19 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from agentic.agent import AgentSpec
+from agentic.mcp import MCPServerSpec
 
 
 class Workflow(BaseModel):
     name: str
     description: str = ""
     agents: list[AgentSpec] = Field(default_factory=list)
+    mcp_servers: list[MCPServerSpec] = Field(default_factory=list)
+    pre_run: str | None = None
+    post_run: str | None = None
 
     @field_validator("agents")
     @classmethod
@@ -23,6 +27,18 @@ class Workflow(BaseModel):
         if dups:
             raise ValueError(f"duplicate agent ids: {sorted(dups)}")
         return v
+
+    @model_validator(mode="after")
+    def _agent_mcp_refs_resolve(self) -> "Workflow":
+        declared = {s.name for s in self.mcp_servers}
+        for a in self.agents:
+            for ref in a.mcp_servers:
+                if ref not in declared:
+                    raise ValueError(
+                        f"agent '{a.id}' references mcp server {ref!r} which the "
+                        f"workflow does not declare (declared: {sorted(declared)})"
+                    )
+        return self
 
     @classmethod
     def load(cls, path: Path) -> "Workflow":
