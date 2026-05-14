@@ -1,0 +1,44 @@
+name: designer
+description: Brief → audit → direction → implement → review. Five-agent pipeline for visual/UX work on any existing UI surface (page, component, screen, view). Pauses after `direction` so a human picks from proposed options before implementation.
+
+agents:
+  - id: brief
+    prompt_file: prompts/design_brief.md
+    inputs: [task]
+    outputs: [BRIEF.md]
+    allowed_tools: [Read, Write]
+    mcp_servers: []
+    sub_agents: []
+
+  - id: audit
+    prompt_file: prompts/design_audit.md
+    inputs: [BRIEF.md]
+    outputs: [AUDIT.md]
+    allowed_tools: [Read, Grep, Glob, Bash, Write, Skill]
+    mcp_servers: []
+    sub_agents: []
+
+  - id: direction
+    prompt_file: prompts/design_direction.md
+    inputs: [BRIEF.md, AUDIT.md]
+    outputs: [DIRECTIONS.md]
+    allowed_tools: [Read, Write, Skill]
+    mcp_servers: []
+    sub_agents: []
+    human_checkpoint: true
+
+  - id: implement
+    prompt_file: prompts/design_implement.md
+    inputs: [BRIEF.md, AUDIT.md, DIRECTIONS.md]
+    outputs: [CHANGES.md]
+    allowed_tools: [Read, Write, Edit, Bash, Skill]
+    mcp_servers: []
+    sub_agents: []
+
+  - id: review
+    prompt_file: prompts/design_review.md
+    inputs: [BRIEF.md, CHANGES.md]
+    outputs: [REVIEW.md]
+    allowed_tools: [Read, Bash, Write, Skill]
+    mcp_servers: []
+    sub_agents: []

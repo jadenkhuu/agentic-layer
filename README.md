@@ -4,10 +4,38 @@ Orchestrator for **Claude Agent SDK** workflows. A workflow is an ordered list
 of *agents* (each a `claude_agent_sdk.query()` invocation) that hand off to one
 another via files in a run-scoped working directory.
 
-Three workflows ship out of the box — `feature`, `bugfix`, `docs` — and you
+Four workflows ship out of the box — `feature`, `bugfix`, `docs`, `designer` — and you
 can author your own (see [Authoring a workflow](#authoring-a-workflow)).
 
 ## Install
+
+Pick one. Both install the `agentic` CLI and `claude-agent-sdk` as a dependency.
+
+### Option A — Global install (recommended: `agentic` available everywhere)
+
+Use [`pipx`](https://pipx.pypa.io/) to install into an isolated environment and expose `agentic` on your `PATH`. After this, `agentic` works in any directory without activating a venv.
+
+```bash
+# Install pipx if you don't have it:
+# macOS:   brew install pipx && pipx ensurepath
+# Debian:  sudo apt install pipx && pipx ensurepath
+# Other:   python -m pip install --user pipx && python -m pipx ensurepath
+
+pipx install -e .          # from the agentic-layer repo root
+```
+
+Verify:
+
+```bash
+which agentic              # should resolve outside any venv
+agentic --help
+```
+
+To upgrade after pulling new changes, re-run `pipx install -e .` (the `-e` flag means subsequent `git pull`s in the repo are picked up automatically — no reinstall needed).
+
+### Option B — Project-local venv
+
+Keeps `agentic` scoped to a single virtualenv. Use this if you'd rather not install globally.
 
 ```bash
 python -m venv .venv
@@ -15,7 +43,7 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-This installs the `agentic` CLI and `claude-agent-sdk` as a dependency.
+`agentic` is only on `PATH` while the venv is activated.
 
 ## Setup
 
@@ -134,7 +162,7 @@ Each agent is a fresh `claude_agent_sdk.query()` invocation.
 
 ## Built-in workflows
 
-`agentic init` scaffolds these three into `.agentic/workflows/`. Edit or
+`agentic init` scaffolds these four into `.agentic/workflows/`. Edit or
 delete any of them — they version with your project.
 
 ### `feature` — spec → explore → implement → test → review → PR
@@ -167,6 +195,30 @@ checks clarity and accuracy instead of code correctness.
 ```bash
 agentic run docs --task "document the new --stub flag in SETUP.md"
 ```
+
+### `designer` — visual/UX work on an existing UI surface
+
+Five agents: `brief → audit → direction → implement → review`. Aimed at
+restyling or refining any existing UI surface (page, component, screen,
+view) rather than building a feature from scratch.
+
+| Agent | Reads | Writes | What it does |
+|---|---|---|---|
+| `brief` | `task` (string) | `BRIEF.md` | Capture intent, scope, mood, must-preserve guardrails. No solutions. |
+| `audit` | `BRIEF.md` | `AUDIT.md` | Inventory current type/color/spacing/tokens for the in-scope surface. Read-only. |
+| `direction` | `BRIEF.md`, `AUDIT.md` | `DIRECTIONS.md` | Propose 2–3 distinct design directions with tradeoffs and a recommendation. |
+| `implement` | `BRIEF.md`, `AUDIT.md`, `DIRECTIONS.md` | `CHANGES.md` | Apply the chosen direction to the codebase. |
+| `review` | `BRIEF.md`, `CHANGES.md` + `git diff` | `REVIEW.md` | Severity-ordered design review against brief + UX heuristics. Read-only. |
+
+```bash
+agentic run designer --task "refresh the dashboard header — calmer, more data-forward"
+```
+
+Note: `direction` is intended as a human checkpoint — the YAML marks it
+`human_checkpoint: true`, but the runner does not yet pause on that flag,
+so today the workflow runs straight through. To enforce the pause, halt
+the run after `direction`, mark a `[CHOSEN]` direction in `DIRECTIONS.md`,
+then resume.
 
 ## Watching a run
 
