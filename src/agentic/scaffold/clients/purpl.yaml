@@ -1,0 +1,20 @@
+name: purpl
+stack: typescript, react 19, next.js 15 (app router), tailwind v4, drizzle, neon postgres
+conventions:
+  - "tailwind v4 via @theme tokens — never inline styles"
+  - "lowercase UI copy throughout"
+  - "match existing helm-* css component classes (helm-card, helm-button-*, helm-eyebrow, helm-section-title)"
+  - "server components by default; client components only when interactivity requires it"
+  - "accessibility: every interactive element has a visible focus state and a semantic label"
+do:
+  - "reuse Card, Button, StatusPill, SeverityBadge before writing new primitives"
+  - "use cn() from lib/utils for class composition"
+  - "use the existing colour variables (--color-accent, --color-ink-*, --color-line-*)"
+do_not:
+  - "introduce a second styling system (css modules, styled-components, etc.)"
+  - "import design libraries that shadow tailwind tokens"
+  - "uppercase text unless it's a brand-name proper noun"
+extra: |
+  This is purpl's internal helm tool. Code should be readable by both
+  frontend and ops engineers. Favour clarity over cleverness. Comment only
+  where the *why* is non-obvious.

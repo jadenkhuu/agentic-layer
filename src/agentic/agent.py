@@ -72,6 +72,27 @@ def run_agent(spec: AgentSpec, ctx: RunContext) -> None:
 def _run_stub(spec: AgentSpec, ctx: RunContext) -> None:
     for name in spec.inputs:
         ctx.resolve_input(name)  # surface missing-input errors early
+    # Emit an assistant.text event in stub mode if a client prefix is set,
+    # so tests can verify the client config reaches each agent's prompt.
+    if ctx.client_prefix:
+        ctx.events.emit(
+            "assistant.text",
+            agent=spec.id,
+            agent_id=spec.id,
+            text=f"[stub prompt prefix]\n{ctx.client_prefix.strip()}",
+        )
+    # Resolve MCP servers (raises if an agent names one the workflow
+    # didn't declare) so stub-mode tests can verify the wiring without
+    # making an SDK call. Returned dict is recorded as a tool.use event.
+    mcp_dict = _resolve_mcp_for_agent(spec, ctx)
+    if mcp_dict:
+        ctx.events.emit(
+            "tool.use",
+            agent=spec.id,
+            agent_id=spec.id,
+            tool_name="mcp.wired",
+            tool_input=", ".join(sorted(mcp_dict.keys())),
+        )
     for out in spec.outputs:
         path = ctx.working_dir / out
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -100,6 +121,8 @@ async def _run_real(spec: AgentSpec, ctx: RunContext) -> None:
             f"agent {spec.id}: prompt_file is required for real (non-stub) runs"
         )
     prompt_text = _substitute(prompt_text, spec, ctx)
+    if ctx.client_prefix:
+        prompt_text = ctx.client_prefix + prompt_text
 
     mcp_dict = _resolve_mcp_for_agent(spec, ctx)
 

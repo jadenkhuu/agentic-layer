@@ -11,9 +11,18 @@ from rich.console import Console
 from rich.table import Table
 
 from agentic.auth import NoAuthConfigured
+from agentic.client_config import load_client
 from agentic.context import RunContext
 from agentic.logging import setup_run_logging, teardown_run_logging
-from agentic.runner import AgentFailure, DirtyWorkingTree, run_workflow
+from agentic.runner import (
+    AgentFailure,
+    DirtyWorkingTree,
+    RunPaused,
+    abort_run,
+    resume_run,
+    run_workflow,
+)
+from agentic.state import RunState
 from agentic.workflow import Workflow, list_workflows
 
 console = Console()
@@ -120,12 +129,23 @@ What happens:
               help="Extra inputs as key=value. Repeatable.")
 @click.option("--stub", is_flag=True,
               help="Run agents in stub mode (no SDK calls). Useful for testing wiring.")
+@click.option("--client", "client_name", default=None,
+              help="Name of a per-client config (see .agentic/clients/<name>.yaml). "
+                   "Its conventions get prepended to every agent prompt.")
+@click.option("--auto-fix-ci", is_flag=True,
+              help="After the `pr` agent opens the PR, poll `gh pr checks` "
+                   "and re-invoke a fix agent on failure.")
+@click.option("--max-fix-attempts", default=3, type=int,
+              help="Cap on the CI-failure fix loop. Default 3.")
 def run_cmd(
     workflow_name: str,
     task: str | None,
     issue: int | None,
     kv_inputs: tuple[str, ...],
     stub: bool,
+    client_name: str | None,
+    auto_fix_ci: bool,
+    max_fix_attempts: int,
 ) -> None:
     target = _target_repo()
 
@@ -164,6 +184,18 @@ def run_cmd(
     )
     log_path = setup_run_logging(ctx)
 
+    client_cfg = None
+    if client_name:
+        try:
+            client_cfg = load_client(
+                client_name,
+                search_roots=[target, Path(__file__).parent / "scaffold"],
+            )
+        except FileNotFoundError as e:
+            console.print(f"[red]error:[/red] {e}")
+            sys.exit(2)
+        console.print(f"  client: [bold]{client_cfg.name}[/bold]")
+
     mode_tag = "[yellow](stub)[/yellow]" if stub else "[green](real SDK)[/green]"
     console.print(f"[cyan]▶[/cyan] run [bold]{ctx.run_id}[/bold] :: workflow=[bold]{workflow.name}[/bold] {mode_tag}")
     console.print(f"  working dir: {ctx.working_dir}")
@@ -172,7 +204,12 @@ def run_cmd(
     console.print(f"  [dim]watch this run: agentic watch {short}[/dim]")
 
     try:
-        run_workflow(workflow, ctx)
+        run_workflow(
+            workflow, ctx,
+            client_config=client_cfg,
+            auto_fix_ci=auto_fix_ci,
+            max_fix_attempts=max_fix_attempts,
+        )
     except DirtyWorkingTree as e:
         console.print(f"[red]✗ refused to run:[/red] {e}")
         sys.exit(1)
@@ -187,6 +224,20 @@ def run_cmd(
         sys.exit(1)
     finally:
         teardown_run_logging(ctx)
+
+    # If the run paused at a pause_after agent, surface that instead of "complete".
+    state_path = ctx.working_dir / "state.json"
+    if state_path.exists():
+        try:
+            st = RunState.load(ctx.working_dir)
+            if st.status == "paused":
+                console.print(
+                    f"[yellow]⏸ run paused[/yellow] :: {ctx.run_id} — "
+                    f"resume with [cyan]agentic resume {short}[/cyan]"
+                )
+                return
+        except Exception:  # pragma: no cover - defensive
+            pass
 
     if ctx.branch:
         console.print(f"[green]✓ run complete[/green] :: {ctx.run_id} on branch [bold]{ctx.branch}[/bold]")
@@ -346,6 +397,74 @@ def _print_runs_table(runs_dir: Path) -> None:
     console.print(table)
 
 
+@main.command("resume", context_settings=CONTEXT_SETTINGS)
+@click.argument("run_id")
+@click.option("--client", "client_name", default=None,
+              help="Re-apply a client config when resuming (defaults to the original).")
+def resume_cmd(run_id: str, client_name: str | None) -> None:
+    """Resume a paused run from where it stopped.
+
+    Looks up `.agentic/runs/<run-id>/` (8-char short prefix accepted),
+    reads state.json, and continues with the next agent.
+    """
+    target = _target_repo()
+    runs_dir = target / ".agentic" / "runs"
+    chosen = _resolve_run(runs_dir, run_id)
+    if chosen is None:
+        console.print(f"[red]error:[/red] no run matching '{run_id}' in {runs_dir}")
+        sys.exit(2)
+    try:
+        state = RunState.load(chosen)
+    except FileNotFoundError:
+        console.print(f"[red]error:[/red] no state.json in {chosen}")
+        sys.exit(2)
+    try:
+        workflow = Workflow.find(state.workflow_name, target)
+    except FileNotFoundError as e:
+        console.print(f"[red]error:[/red] {e}")
+        sys.exit(2)
+
+    client_cfg = None
+    effective_client = client_name or state.client
+    if effective_client:
+        try:
+            client_cfg = load_client(
+                effective_client,
+                search_roots=[target, Path(__file__).parent / "scaffold"],
+            )
+        except FileNotFoundError as e:
+            console.print(f"[red]error:[/red] {e}")
+            sys.exit(2)
+
+    console.print(f"[cyan]▶[/cyan] resume [bold]{state.run_id}[/bold] "
+                  f"from agent index {state.current_agent_index}")
+    try:
+        resume_run(chosen, workflow, client_config=client_cfg)
+    except AgentFailure as e:
+        console.print(f"[red]✗ run halted:[/red] {e}")
+        sys.exit(1)
+
+    final = RunState.load(chosen)
+    if final.status == "paused":
+        console.print(f"[yellow]⏸ paused again[/yellow] :: {state.run_id}")
+    else:
+        console.print(f"[green]✓ run complete[/green] :: {state.run_id}")
+
+
+@main.command("abort", context_settings=CONTEXT_SETTINGS)
+@click.argument("run_id")
+def abort_cmd(run_id: str) -> None:
+    """Mark a paused or running run as aborted. Idempotent for terminal runs."""
+    target = _target_repo()
+    runs_dir = target / ".agentic" / "runs"
+    chosen = _resolve_run(runs_dir, run_id)
+    if chosen is None:
+        console.print(f"[red]error:[/red] no run matching '{run_id}' in {runs_dir}")
+        sys.exit(2)
+    state = abort_run(chosen)
+    console.print(f"[yellow]✗ aborted[/yellow] :: {state.run_id}")
+
+
 @main.command("logs", context_settings=CONTEXT_SETTINGS)
 @click.argument("run_id")
 def logs_cmd(run_id: str) -> None:
@@ -386,6 +505,9 @@ def init_cmd() -> None:
         gitignore.write_text("runs/\n")
 
     src_root = Path(__file__).parent / "scaffold"
+    clients_dir = target / ".agentic" / "clients"
+    clients_dir.mkdir(parents=True, exist_ok=True)
+
     created: list[Path] = []
     for src_file in (src_root / "workflows").glob("*.yaml"):
         dst = workflows_dir / src_file.name
@@ -397,6 +519,13 @@ def init_cmd() -> None:
         if not dst.exists():
             shutil.copy(src_file, dst)
             created.append(dst)
+    src_clients = src_root / "clients"
+    if src_clients.exists():
+        for src_file in src_clients.glob("*.yaml"):
+            dst = clients_dir / src_file.name
+            if not dst.exists():
+                shutil.copy(src_file, dst)
+                created.append(dst)
 
     console.print(f"[green]✓[/green] initialized .agentic/ in {target}")
     for p in created:
