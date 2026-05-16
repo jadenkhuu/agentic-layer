@@ -287,6 +287,34 @@ def list_cmd() -> None:
     console.print(table)
 
 
+_SCHEMA_HELP = """\
+Print the JSON Schema for a config-file kind, to stdout.
+
+\b
+Examples:
+  agentic schema --workflow         # schema for .agentic/workflows/<name>.yaml
+  agentic schema --client-config    # schema for .agentic/clients/<name>.yaml
+  agentic schema                    # defaults to --workflow
+
+The schema is derived directly from the Pydantic models the runner uses
+(`Workflow`, `ClientConfig`), so it always matches what `agentic run`
+will accept. Tooling — e.g. helm's Monaco YAML editors — consumes this to
+drive validation and autocomplete.
+"""
+
+
+@main.command("schema", context_settings=CONTEXT_SETTINGS, help=_SCHEMA_HELP)
+@click.option("--workflow", "kind", flag_value="workflow",
+              help="JSON schema for a workflow YAML file (the default).")
+@click.option("--client-config", "kind", flag_value="client-config",
+              help="JSON schema for a client-config YAML file.")
+def schema_cmd(kind: str | None) -> None:
+    from agentic.client_config import ClientConfig
+
+    model = ClientConfig if kind == "client-config" else Workflow
+    click.echo(json.dumps(model.model_json_schema(), indent=2))
+
+
 _WATCH_HELP = """\
 Open a TUI to watch a run (live for in-progress, static for complete).
 
