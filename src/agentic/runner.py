@@ -139,6 +139,7 @@ def run_workflow(
         raise
 
     _maybe_emit_deploy_trigger(workflow, ctx)
+    _maybe_write_memory(ctx)
     ctx.events.emit(
         "run.complete",
         status="success",
@@ -261,6 +262,7 @@ def resume_run(
         _persist_state(workflow, ctx, status="failed")
         raise
     _maybe_emit_deploy_trigger(workflow, ctx)
+    _maybe_write_memory(ctx)
     ctx.events.emit("run.complete", status="success",
                     elapsed_seconds=round(time.monotonic() - start_t, 3),
                     failed_agent=None)
@@ -602,6 +604,27 @@ def _maybe_emit_deploy_trigger(workflow: Workflow, ctx: RunContext) -> None:
             state.save(ctx.working_dir)
     except Exception as e:  # a deploy hook must never break a run
         logger.warning("run %s :: deploy.trigger emit failed: %s", ctx.run_id, e)
+
+
+# ---------------------------------------------------------------------------
+# Memory hook
+# ---------------------------------------------------------------------------
+
+
+def _maybe_write_memory(ctx: RunContext) -> None:
+    """After a successful run, distil it into a ~600-word project memory
+    saved to the helm studio docs tree (see `agentic.memory.write_memory`).
+
+    A no-op when `HELM_STUDIO_DOCS_PATH` is unset. Best-effort: a failure
+    here is logged, never raised — a missed memory write must not fail an
+    otherwise-green run.
+    """
+    try:
+        from agentic.memory import write_memory  # lazy: keep import graph light
+
+        write_memory(ctx.working_dir, events=ctx.events, stub_mode=ctx.stub_mode)
+    except Exception as e:  # a memory write must never break a run
+        logger.warning("run %s :: memory write failed: %s", ctx.run_id, e)
 
 
 # ---------------------------------------------------------------------------
