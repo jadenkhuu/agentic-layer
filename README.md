@@ -294,6 +294,12 @@ Event types (the `AgenticEventType` enum in `src/agentic/events.py`):
 of each. A forked run's events.jsonl opens with a `run.fork` event whose
 payload carries `forked_from` and `fork_step`.
 
+Each `agent.start` event carries a `system_prompt_preview` field — a
+truncated view of the text prepended to that agent's prompt (the
+`--context-file` briefing context, then the `--client` conventions). It is
+empty when neither is in effect, so a run's injected context is auditable
+from events.jsonl alone.
+
 #### `agent.pause` events
 
 When an agent declares `pause_after: true`, the runner halts the run after
@@ -346,7 +352,7 @@ The PR number and URL are also folded onto `state.json` as `pr_number` /
 
 | Command | Description |
 |---|---|
-| `agentic run <name> [--task ...] [--issue N] [--input k=v] [--stub]` | Run a workflow. `--task` and `--issue` are mutually exclusive. |
+| `agentic run <name> [--task ...] [--issue N] [--input k=v] [--stub] [--client ...] [--context-file ...]` | Run a workflow. `--task` and `--issue` are mutually exclusive. `--context-file` prepends a file's contents to every agent's system prompt (helm injects the project briefing this way). |
 | `agentic list` | List workflows in `.agentic/workflows/`. |
 | `agentic watch [<run-id>] [--list]` | Open the run viewer TUI, or print the run table with `--list`. |
 | `agentic logs <run-id>` | Print `.agentic/runs/<run-id>/run.log`. |

@@ -143,6 +143,10 @@ What happens:
 @click.option("--client", "client_name", default=None,
               help="Name of a per-client config (see .agentic/clients/<name>.yaml). "
                    "Its conventions get prepended to every agent prompt.")
+@click.option("--context-file", "context_file", default=None,
+              help="Path to a file whose contents are prepended to every "
+                   "agent's system prompt. helm injects the project briefing "
+                   "+ studio patterns this way.")
 @click.option("--auto-fix-ci", is_flag=True,
               help="After the `pr` agent opens the PR, poll `gh pr checks` "
                    "and re-invoke a fix agent on failure.")
@@ -155,6 +159,7 @@ def run_cmd(
     kv_inputs: tuple[str, ...],
     stub: bool,
     client_name: str | None,
+    context_file: str | None,
     auto_fix_ci: bool,
     max_fix_attempts: int,
 ) -> None:
@@ -163,6 +168,14 @@ def run_cmd(
     if task is not None and issue is not None:
         console.print("[red]error:[/red] --task and --issue are mutually exclusive")
         sys.exit(2)
+
+    helm_context = ""
+    if context_file:
+        cf = Path(context_file)
+        if not cf.exists():
+            console.print(f"[red]error:[/red] --context-file not found: {context_file}")
+            sys.exit(2)
+        helm_context = cf.read_text(encoding="utf-8")
 
     if issue is not None:
         try:
@@ -218,6 +231,7 @@ def run_cmd(
         run_workflow(
             workflow, ctx,
             client_config=client_cfg,
+            helm_context=helm_context,
             auto_fix_ci=auto_fix_ci,
             max_fix_attempts=max_fix_attempts,
         )

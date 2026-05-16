@@ -49,6 +49,31 @@ class RunPaused(Exception):
 
 
 # ---------------------------------------------------------------------------
+# helm-injected context (project briefing) — persisted so resume/fork carry it
+# ---------------------------------------------------------------------------
+
+_HELM_CONTEXT_FILE = "helm-context.md"
+
+
+def _persist_helm_context(run_dir: Path, text: str) -> None:
+    """Write helm's injected context into the run dir so a later resume/fork
+    can re-apply it. Best-effort — a write failure must not halt the run."""
+    try:
+        (run_dir / _HELM_CONTEXT_FILE).write_text(text, encoding="utf-8")
+    except OSError as e:  # pragma: no cover - defensive
+        logger.warning("could not persist %s: %s", _HELM_CONTEXT_FILE, e)
+
+
+def _load_persisted_helm_context(run_dir: Path) -> str:
+    """Read back the helm context persisted by `run_workflow`, or "" if none."""
+    p = run_dir / _HELM_CONTEXT_FILE
+    try:
+        return p.read_text(encoding="utf-8") if p.exists() else ""
+    except OSError:  # pragma: no cover - defensive
+        return ""
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -58,6 +83,7 @@ def run_workflow(
     ctx: RunContext,
     *,
     client_config: ClientConfig | None = None,
+    helm_context: str = "",
     auto_fix_ci: bool = False,
     max_fix_attempts: int = 3,
 ) -> RunContext:
@@ -66,6 +92,10 @@ def run_workflow(
     Optional knobs:
       - `client_config`: when set, ctx.client_prefix is filled and a
         client.set event is emitted; agent.py prepends it to prompts.
+      - `helm_context`: project briefing + studio patterns injected by helm
+        (`agentic run --context-file`). Persisted to the run dir as
+        `helm-context.md` so resume/fork carry it; agent.py prepends it
+        ahead of the client conventions.
       - `auto_fix_ci`: after the run's `pr` agent, poll CI and re-invoke a
         `fix` agent on failure (capped by `max_fix_attempts`).
     """
@@ -83,6 +113,9 @@ def run_workflow(
     if client_config is not None:
         ctx.client_name = client_config.name
         ctx.client_prefix = client_config.as_system_prefix()
+    if helm_context:
+        ctx.helm_context = helm_context
+        _persist_helm_context(ctx.working_dir, helm_context)
 
     ctx.events = EventEmitter(ctx.working_dir / "events.jsonl")
     start_t = time.monotonic()
@@ -232,6 +265,8 @@ def resume_run(
     if client_config is not None:
         ctx.client_name = client_config.name
         ctx.client_prefix = client_config.as_system_prefix()
+    # re-apply the helm-injected briefing context persisted at run start.
+    ctx.helm_context = _load_persisted_helm_context(run_dir)
     ctx.events = EventEmitter(run_dir / "events.jsonl")
     ctx.events.emit("run.resume", from_agent_index=state.current_agent_index,
                     feedback=bool(feedback and feedback.strip()))
@@ -345,6 +380,12 @@ def fork_run(
 
     for name in carried:
         shutil.copy2(source_run_dir / name, ctx.working_dir / name)
+
+    # carry the helm-injected briefing context into the fork so its agents
+    # see the same project context as the source run.
+    persisted_context = _load_persisted_helm_context(source_run_dir)
+    if persisted_context:
+        _persist_helm_context(ctx.working_dir, persisted_context)
 
     forked_state = RunState(
         run_id=ctx.run_id,

@@ -37,6 +37,10 @@ class RunContext(BaseModel):
     # (and the runner echoes the name into events for the UI).
     client_name: str | None = None
     client_prefix: str = ""
+    # populated by `agentic run --context-file` — helm injects the project
+    # briefing + studio patterns here. agent.py prepends it ahead of
+    # client_prefix in every agent's effective system prompt.
+    helm_context: str = ""
     # transient hand-off: the cost of the agent that just ran. agent.py
     # sets it, the runner folds it into RunState then clears it. Never
     # persisted — RunState carries the durable aggregates.

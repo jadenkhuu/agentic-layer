@@ -10,12 +10,24 @@ from pydantic import BaseModel, Field
 from rich.console import Console
 
 from agentic.context import RunContext
-from agentic.events import serialize_tool_input, serialize_tool_result
+from agentic.events import serialize_tool_input, serialize_tool_result, truncate
 from agentic.mcp import resolve_for_agent
 from agentic.pricing import cost_usd
 
 logger = logging.getLogger(__name__)
 console = Console()
+
+# agent.start carries a preview of the effective system-prompt prefix
+# (helm-injected briefing context + client conventions) so a run is
+# auditable from events.jsonl alone.
+SYSTEM_PROMPT_PREVIEW_MAX = 8000
+
+
+def system_prefix(ctx: RunContext) -> str:
+    """The text prepended to an agent's prompt: the helm-injected briefing
+    context first, then the client-config conventions. Either may be empty.
+    """
+    return (ctx.helm_context or "") + (ctx.client_prefix or "")
 
 
 class AgentSpec(BaseModel):
@@ -54,6 +66,7 @@ def run_agent(spec: AgentSpec, ctx: RunContext) -> None:
         prompt_file=spec.prompt_file,
         allowed_tools=spec.allowed_tools,
         inputs=spec.inputs,
+        system_prompt_preview=truncate(system_prefix(ctx), SYSTEM_PROMPT_PREVIEW_MAX),
     )
 
     if ctx.stub_mode:
@@ -79,14 +92,16 @@ def run_agent(spec: AgentSpec, ctx: RunContext) -> None:
 def _run_stub(spec: AgentSpec, ctx: RunContext) -> None:
     for name in spec.inputs:
         ctx.resolve_input(name)  # surface missing-input errors early
-    # Emit an assistant.text event in stub mode if a client prefix is set,
-    # so tests can verify the client config reaches each agent's prompt.
-    if ctx.client_prefix:
+    # Emit an assistant.text event in stub mode if a system prefix is set,
+    # so tests can verify the helm context + client config reach each
+    # agent's prompt without an SDK call.
+    prefix = system_prefix(ctx)
+    if prefix:
         ctx.events.emit(
             "assistant.text",
             agent=spec.id,
             agent_id=spec.id,
-            text=f"[stub prompt prefix]\n{ctx.client_prefix.strip()}",
+            text=f"[stub prompt prefix]\n{prefix.strip()}",
         )
     # Resolve MCP servers (raises if an agent names one the workflow
     # didn't declare) so stub-mode tests can verify the wiring without
@@ -155,8 +170,9 @@ async def _run_real(spec: AgentSpec, ctx: RunContext) -> None:
             f"agent {spec.id}: prompt_file is required for real (non-stub) runs"
         )
     prompt_text = _substitute(prompt_text, spec, ctx)
-    if ctx.client_prefix:
-        prompt_text = ctx.client_prefix + prompt_text
+    prefix = system_prefix(ctx)
+    if prefix:
+        prompt_text = prefix + prompt_text
 
     mcp_dict = _resolve_mcp_for_agent(spec, ctx)
 
