@@ -301,6 +301,7 @@ SDK call is made) so downstream consumers can be exercised offline.
 | `agentic list` | List workflows in `.agentic/workflows/`. |
 | `agentic watch [<run-id>] [--list]` | Open the run viewer TUI, or print the run table with `--list`. |
 | `agentic logs <run-id>` | Print `.agentic/runs/<run-id>/run.log`. |
+| `agentic archive [--older-than 30d] [--dry-run]` | Tarball run dirs older than the threshold into `.agentic/runs/_archive/<run-id>.tar.zst`, collapsing each to a stub `state.json`. `--dry-run` lists candidates only. |
 | `agentic init` | Scaffold `.agentic/workflows/`, `.agentic/prompts/`, and `.agentic/.gitignore`. |
 
 ## Authoring a workflow
