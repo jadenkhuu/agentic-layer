@@ -38,6 +38,11 @@ class RunState(BaseModel):
     total_tokens: int = 0
     total_cost_usd: float = 0.0
     per_agent_costs: dict[str, float] = Field(default_factory=dict)
+    # set by `agentic fork` — the run this one was forked from and the agent
+    # index at which it resumes (outputs of agents before it were copied
+    # over). Defaults keep pre-fork state.json files loadable.
+    forked_from: str | None = None
+    fork_step: int | None = None
 
     def add_cost(
         self,

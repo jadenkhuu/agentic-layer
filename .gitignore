@@ -14,6 +14,10 @@ dist/
 venv/
 env/
 
+# Parallel-worktree symlinks (shared .venv / .agentic from the main checkout)
+/.venv
+/.agentic
+
 # Test / coverage
 .pytest_cache/
 .coverage

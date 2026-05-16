@@ -19,6 +19,7 @@ from agentic.runner import (
     DirtyWorkingTree,
     RunPaused,
     abort_run,
+    fork_run,
     resume_run,
     run_workflow,
 )
@@ -491,6 +492,104 @@ def abort_cmd(run_id: str) -> None:
         sys.exit(2)
     state = abort_run(chosen)
     console.print(f"[yellow]✗ aborted[/yellow] :: {state.run_id}")
+
+
+_FORK_HELP = """\
+Fork a past run from a mid-pipeline step into a fresh run, then resume it.
+
+\b
+Examples:
+  agentic fork a3009f81 --step 2
+  agentic fork a3009f81 --step 2 --task "...try a different approach..."
+  agentic fork a3009f81 --step 1 --input flag=v
+
+\b
+What happens:
+  1. Looks up .agentic/runs/<run-id>/ (8-char short prefix accepted).
+  2. Copies state.json + the outputs of agents [0, --step) into a new run dir.
+  3. Resumes the new run from agent index --step onward.
+
+`--step N` is a 0-based agent index — the first agent the fork re-runs.
+The source run is left untouched; cost accounting starts fresh.
+"""
+
+
+@main.command("fork", context_settings=CONTEXT_SETTINGS, help=_FORK_HELP)
+@click.argument("run_id")
+@click.option("--step", type=int, required=True,
+              help="0-based agent index to resume the fork from. Outputs of "
+                   "agents before this index are copied from the source run.")
+@click.option("--task", default=None,
+              help="Override the 'task' input for the forked run.")
+@click.option("--input", "kv_inputs", multiple=True,
+              help="Override/add inputs as key=value. Repeatable.")
+def fork_cmd(
+    run_id: str,
+    step: int,
+    task: str | None,
+    kv_inputs: tuple[str, ...],
+) -> None:
+    target = _target_repo()
+    runs_dir = target / ".agentic" / "runs"
+    chosen = _resolve_run(runs_dir, run_id)
+    if chosen is None:
+        console.print(f"[red]error:[/red] no run matching '{run_id}' in {runs_dir}")
+        sys.exit(2)
+
+    try:
+        source_state = RunState.load(chosen)
+    except FileNotFoundError:
+        console.print(f"[red]error:[/red] no state.json in {chosen}")
+        sys.exit(2)
+
+    extra: dict[str, str] = {}
+    for kv in kv_inputs:
+        if "=" not in kv:
+            console.print(f"[red]error:[/red] --input '{kv}' must be key=value")
+            sys.exit(2)
+        k, v = kv.split("=", 1)
+        extra[k] = v
+
+    # re-apply the source run's client config so conventions carry over.
+    client_cfg = None
+    if source_state.client:
+        try:
+            client_cfg = load_client(
+                source_state.client,
+                search_roots=[target, Path(__file__).parent / "scaffold"],
+            )
+        except FileNotFoundError as e:
+            console.print(f"[red]error:[/red] {e}")
+            sys.exit(2)
+
+    try:
+        ctx = fork_run(
+            chosen,
+            step=step,
+            target_repo_path=target,
+            task=task,
+            extra_inputs=extra or None,
+            client_config=client_cfg,
+        )
+    except (ValueError, FileNotFoundError) as e:
+        console.print(f"[red]error:[/red] {e}")
+        sys.exit(2)
+    except AgentFailure as e:
+        console.print(f"[red]✗ run halted:[/red] {e}")
+        sys.exit(1)
+
+    console.print(
+        f"[green]✓ forked[/green] :: {source_state.run_id} → [bold]{ctx.run_id}[/bold] "
+        f"(from step {step})"
+    )
+    final = RunState.load(ctx.working_dir)
+    short = ctx.run_id.rsplit("-", 1)[-1]
+    if final.status == "paused":
+        console.print(
+            f"[yellow]⏸ run paused[/yellow] — resume with [cyan]agentic resume {short}[/cyan]"
+        )
+    else:
+        console.print(f"[green]✓ run complete[/green] :: {ctx.run_id}")
 
 
 @main.command("logs", context_settings=CONTEXT_SETTINGS)

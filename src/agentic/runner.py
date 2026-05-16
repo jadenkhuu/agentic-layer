@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -230,6 +231,98 @@ def abort_run(run_dir: Path) -> RunState:
     events = EventEmitter(run_dir / "events.jsonl")
     events.emit("run.complete", status="aborted", failed_agent=None)
     return state
+
+
+def fork_run(
+    source_run_dir: Path,
+    *,
+    step: int,
+    target_repo_path: Path,
+    task: str | None = None,
+    extra_inputs: dict[str, str] | None = None,
+    client_config: ClientConfig | None = None,
+) -> RunContext:
+    """Fork a run: copy its state + the outputs of agents [0, step) into a
+    fresh run dir, then resume the new run from agent `step`.
+
+    `step` is a 0-based agent index — the first agent the forked run
+    re-runs. The outputs of every agent before it are carried over so the
+    resumed pipeline has the inputs it expects; everything from `step`
+    onward is produced anew. `task` / `extra_inputs` override the source
+    run's inputs (e.g. to retry a step with a tweaked task description).
+
+    Cost aggregates start fresh — the forked run accounts only for the
+    agents it actually re-runs. Returns the resumed RunContext.
+    """
+    source_state = RunState.load(source_run_dir)
+    workflow = Workflow.find(source_state.workflow_name, target_repo_path)
+    n_agents = len(workflow.agents)
+    if not 0 <= step <= n_agents:
+        raise ValueError(
+            f"fork step {step} out of range; workflow '{workflow.name}' has "
+            f"{n_agents} agents (valid: 0..{n_agents})"
+        )
+
+    # the outputs of every agent before the fork point must exist in the
+    # source, or the resumed pipeline will halt on missing inputs.
+    carried: list[str] = []
+    for spec in workflow.agents[:step]:
+        carried.extend(spec.outputs)
+    missing = [o for o in carried if not (source_run_dir / o).exists()]
+    if missing:
+        raise ValueError(
+            f"cannot fork {source_state.run_id} at step {step}: source is "
+            f"missing carried-over outputs {missing} — it did not progress "
+            f"that far."
+        )
+
+    new_inputs = dict(source_state.inputs)
+    if task is not None:
+        new_inputs["task"] = task
+    if extra_inputs:
+        new_inputs.update(extra_inputs)
+
+    ctx = RunContext.create(
+        workflow_name=source_state.workflow_name,
+        target_repo_path=target_repo_path,
+        inputs=new_inputs,
+        stub_mode=source_state.stub_mode,
+    )
+
+    for name in carried:
+        shutil.copy2(source_run_dir / name, ctx.working_dir / name)
+
+    forked_state = RunState(
+        run_id=ctx.run_id,
+        workflow_name=source_state.workflow_name,
+        target_repo_path=str(target_repo_path),
+        status="paused",
+        current_agent_index=step,
+        branch=source_state.branch,
+        base_branch=source_state.base_branch,
+        client=source_state.client,
+        inputs=new_inputs,
+        stub_mode=source_state.stub_mode,
+        completed_agents=[a.id for a in workflow.agents[:step]],
+        forked_from=source_state.run_id,
+        fork_step=step,
+    )
+    forked_state.save(ctx.working_dir)
+
+    # seed events.jsonl so `agentic watch` and helm's run sync treat the
+    # fork as a first-class run rather than a stray dir.
+    EventEmitter(ctx.working_dir / "events.jsonl").emit(
+        "run.fork",
+        workflow=workflow.name,
+        agent_count=n_agents,
+        branch=source_state.branch,
+        stub_mode=source_state.stub_mode,
+        forked_from=source_state.run_id,
+        fork_step=step,
+    )
+
+    logger.info("fork %s -> %s at step %d", source_state.run_id, ctx.run_id, step)
+    return resume_run(ctx.working_dir, workflow, client_config=client_config)
 
 
 # ---------------------------------------------------------------------------
