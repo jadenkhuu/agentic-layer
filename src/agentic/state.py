@@ -32,6 +32,10 @@ class RunState(BaseModel):
     fix_attempts: int = 0
     completed_agents: list[str] = Field(default_factory=list)
     stub_mode: bool = False
+    # human-readable reason a paused run is awaiting approval. Set when an
+    # agent with pause_after halts the run, cleared on resume. None unless
+    # status == "paused". Defaults keep pre-Phase-5 state.json files loadable.
+    pause_reason: str | None = None
     # cost aggregates — folded in by the runner after each agent (see
     # runner._record_agent_cost). Defaults keep pre-Phase-1 state.json
     # files loadable.

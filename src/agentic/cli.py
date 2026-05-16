@@ -440,11 +440,17 @@ def _print_runs_table(runs_dir: Path) -> None:
 @click.argument("run_id")
 @click.option("--client", "client_name", default=None,
               help="Re-apply a client config when resuming (defaults to the original).")
-def resume_cmd(run_id: str, client_name: str | None) -> None:
+@click.option("--feedback", default=None,
+              help="Operator feedback prepended to the next agent's task "
+                   "before resuming (human-in-the-loop send-back).")
+def resume_cmd(run_id: str, client_name: str | None,
+               feedback: str | None) -> None:
     """Resume a paused run from where it stopped.
 
     Looks up `.agentic/runs/<run-id>/` (8-char short prefix accepted),
-    reads state.json, and continues with the next agent.
+    reads state.json, and continues with the next agent. Pass `--feedback`
+    to send the run back with a correction prepended to the next agent's
+    task.
     """
     target = _target_repo()
     runs_dir = target / ".agentic" / "runs"
@@ -477,8 +483,12 @@ def resume_cmd(run_id: str, client_name: str | None) -> None:
 
     console.print(f"[cyan]▶[/cyan] resume [bold]{state.run_id}[/bold] "
                   f"from agent index {state.current_agent_index}")
+    if feedback:
+        console.print("[cyan]↩[/cyan] with operator feedback prepended to "
+                      "the next agent's task")
     try:
-        resume_run(chosen, workflow, client_config=client_cfg)
+        resume_run(chosen, workflow, client_config=client_cfg,
+                   feedback=feedback)
     except AgentFailure as e:
         console.print(f"[red]✗ run halted:[/red] {e}")
         sys.exit(1)

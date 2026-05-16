@@ -31,6 +31,10 @@ class AgentSpec(BaseModel):
     # human-in-the-loop checkpoint — runner halts after this agent and persists
     # state so an operator can review (and `agentic resume <run-id>`).
     pause_after: bool = False
+    # optional human-readable reason surfaced in the approval UI when this
+    # agent's pause_after checkpoint halts the run. When unset the runner
+    # builds a generic message from the agent id.
+    pause_reason: str | None = None
     # optional shell commands the runner executes around this agent. failures
     # halt the run with a clear error and the script's tail in events.jsonl.
     pre: str | None = None
