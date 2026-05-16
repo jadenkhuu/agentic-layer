@@ -51,6 +51,10 @@ class AgenticEventType(str, Enum):
     # one per SDK round-trip — token usage + estimated USD cost. payload:
     # {model, input_tokens, output_tokens, cache_read, cache_creation, cost_usd}
     COST = "cost"
+    # emitted once when a successful run produced a PR — the cue for helm's
+    # run sync to fire a Vercel preview deploy. payload:
+    # {branch, base_branch, pr_number, pr_url, sha, target_repo}
+    DEPLOY_TRIGGER = "deploy.trigger"
 
 TOOL_INPUT_MAX = 500
 TOOL_RESULT_MAX = 1000
