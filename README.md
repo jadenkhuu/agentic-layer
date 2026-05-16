@@ -294,6 +294,26 @@ each `cost` event into `state.json` as `total_tokens`, `total_cost_usd`, and
 `per_agent_costs`. In `--stub` mode a zero-cost event is still emitted (no
 SDK call is made) so downstream consumers can be exercised offline.
 
+#### `deploy.trigger` events
+
+When a run finishes successfully **and** produced a PR (any agent output
+named `PR_*` or `PR.md` containing a PR URL or `#NNN` reference), the runner
+emits a single `deploy.trigger` event just before `run.complete`:
+
+```jsonl
+{"ts": "...", "type": "deploy.trigger", "agent": null, "payload": {
+  "branch": "agentic/feature-ab12cd34",
+  "base_branch": "main",
+  "pr_number": 318,
+  "pr_url": "https://github.com/purpl/caat/pull/318",
+  "sha": "9f3c1ab...", "target_repo": "/path/to/repo"}}
+```
+
+It is the cue for helm's run sync to fire a Vercel preview deploy for the
+branch (when `VERCEL_TOKEN` is configured). Non-PR workflows emit nothing.
+The PR number and URL are also folded onto `state.json` as `pr_number` /
+`pr_url`. Emission is best-effort — a failed deploy hook never fails a run.
+
 ## CLI
 
 | Command | Description |

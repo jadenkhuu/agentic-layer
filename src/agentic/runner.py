@@ -10,7 +10,7 @@ from agentic.agent import AgentSpec, run_agent
 from agentic.auth import AuthMethod, detect_auth
 from agentic.client_config import ClientConfig
 from agentic.context import RunContext
-from agentic.events import EventEmitter
+from agentic.events import AgenticEventType, EventEmitter
 from agentic.scripts import ScriptFailure, run_script
 from agentic.state import RunState
 from agentic.workflow import Workflow
@@ -138,6 +138,7 @@ def run_workflow(
         _persist_state(workflow, ctx, status="failed")
         raise
 
+    _maybe_emit_deploy_trigger(workflow, ctx)
     ctx.events.emit(
         "run.complete",
         status="success",
@@ -209,6 +210,7 @@ def resume_run(
     except ScriptFailure:
         _persist_state(workflow, ctx, status="failed")
         raise
+    _maybe_emit_deploy_trigger(workflow, ctx)
     ctx.events.emit("run.complete", status="success",
                     elapsed_seconds=round(time.monotonic() - start_t, 3),
                     failed_agent=None)
@@ -469,8 +471,16 @@ def _maybe_run_ci_fix_loop(
 
 
 def _find_pr_number_from_outputs(workflow: Workflow, ctx: RunContext) -> int | None:
-    """Scan PR_BODY.md (or any output starting with PR_) for a #NNN reference
-    or a PR URL.
+    """Scan PR_BODY.md (or any output starting with PR_) for a PR number."""
+    return _find_pr_ref(workflow, ctx)[0]
+
+
+def _find_pr_ref(workflow: Workflow, ctx: RunContext) -> tuple[int | None, str | None]:
+    """Scan PR_* / PR.md outputs for a PR URL and number.
+
+    Returns `(number, url)`. A bare `#NNN` reference yields a number with no
+    URL; a full `…/pull/NNN` URL yields both. `(None, None)` when the run
+    produced no PR output at all.
     """
     import re
     for spec in workflow.agents:
@@ -481,13 +491,64 @@ def _find_pr_number_from_outputs(workflow: Workflow, ctx: RunContext) -> int | N
             if not p.exists():
                 continue
             blob = p.read_text(encoding="utf-8", errors="ignore")
-            m = re.search(r"https?://\S+/pull/(\d+)", blob)
-            if m:
-                return int(m.group(1))
-            m = re.search(r"#(\d{1,7})\b", blob)
-            if m:
-                return int(m.group(1))
-    return None
+            url_m = re.search(r"https?://\S+?/pull/(\d+)", blob)
+            if url_m:
+                return int(url_m.group(1)), url_m.group(0)
+            num_m = re.search(r"#(\d{1,7})\b", blob)
+            if num_m:
+                return int(num_m.group(1)), None
+    return None, None
+
+
+# ---------------------------------------------------------------------------
+# Deploy hook
+# ---------------------------------------------------------------------------
+
+
+def _head_sha(repo_path: Path) -> str | None:
+    """The target repo's current HEAD sha, or None if it isn't a git repo."""
+    if not (repo_path / ".git").exists():
+        return None
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_path, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+    except subprocess.CalledProcessError:
+        return None
+
+
+def _maybe_emit_deploy_trigger(workflow: Workflow, ctx: RunContext) -> None:
+    """After a successful run, if the workflow produced a PR, emit a
+    `deploy.trigger` event so downstream consumers (helm's run sync) can
+    fire a Vercel preview deploy for the branch.
+
+    No-op for non-PR workflows. Best-effort: a failure here is logged, never
+    raised — a missed deploy hook must not fail an otherwise-green run.
+    """
+    try:
+        pr_number, pr_url = _find_pr_ref(workflow, ctx)
+        if pr_number is None and pr_url is None:
+            return
+        ctx.events.emit(
+            AgenticEventType.DEPLOY_TRIGGER,
+            branch=ctx.branch,
+            base_branch=ctx.base_branch,
+            pr_number=pr_number,
+            pr_url=pr_url,
+            sha=_head_sha(ctx.target_repo_path),
+            target_repo=str(ctx.target_repo_path),
+        )
+        # surface the PR ref on state.json so helm's sync can read it
+        # without re-parsing the run's output files.
+        state_path = RunState.path_for(ctx.working_dir)
+        if state_path.exists():
+            state = RunState.load(ctx.working_dir)
+            state.pr_number = pr_number
+            state.pr_url = pr_url
+            state.save(ctx.working_dir)
+    except Exception as e:  # a deploy hook must never break a run
+        logger.warning("run %s :: deploy.trigger emit failed: %s", ctx.run_id, e)
 
 
 # ---------------------------------------------------------------------------
