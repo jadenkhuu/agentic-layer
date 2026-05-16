@@ -43,6 +43,10 @@ class RunState(BaseModel):
     # over). Defaults keep pre-fork state.json files loadable.
     forked_from: str | None = None
     fork_step: int | None = None
+    # ISO-8601 timestamp set by `agentic archive` once a run's artifacts have
+    # been tarballed. None for live runs; defaults keep pre-archival
+    # state.json files loadable.
+    archived_at: str | None = None
 
     def add_cost(
         self,
