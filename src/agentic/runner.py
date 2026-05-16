@@ -161,11 +161,17 @@ def resume_run(
     workflow: Workflow,
     *,
     client_config: ClientConfig | None = None,
+    feedback: str | None = None,
 ) -> RunContext:
     """Resume a paused run from the next agent.
 
     Reads state.json, reconstructs a RunContext pointing at the same
     working dir, and walks agents from current_agent_index.
+
+    `feedback` is optional human-in-the-loop input (e.g. a client approving
+    or revising a milestone from helm's portal). When set it is recorded as
+    a `hitl.feedback` event and folded into the run's inputs as
+    `hitl_feedback`, where the next agent's prompt can pick it up.
     """
     state = RunState.load(run_dir)
     if state.status != "paused":
@@ -190,6 +196,11 @@ def resume_run(
         ctx.client_prefix = client_config.as_system_prefix()
     ctx.events = EventEmitter(run_dir / "events.jsonl")
     ctx.events.emit("run.resume", from_agent_index=state.current_agent_index)
+
+    if feedback:
+        ctx.inputs["hitl_feedback"] = feedback
+        state.inputs["hitl_feedback"] = feedback
+        ctx.events.emit(AgenticEventType.HITL_FEEDBACK, text=feedback)
 
     state.status = "running"
     state.save(run_dir)

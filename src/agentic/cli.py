@@ -440,7 +440,12 @@ def _print_runs_table(runs_dir: Path) -> None:
 @click.argument("run_id")
 @click.option("--client", "client_name", default=None,
               help="Re-apply a client config when resuming (defaults to the original).")
-def resume_cmd(run_id: str, client_name: str | None) -> None:
+@click.option("--feedback", "feedback", default=None,
+              help="Human-in-the-loop feedback to inject before resuming — "
+                   "recorded as a hitl.feedback event and exposed to the next "
+                   "agent as the `hitl_feedback` input. helm's client portal "
+                   "uses this to forward milestone approvals/revisions.")
+def resume_cmd(run_id: str, client_name: str | None, feedback: str | None) -> None:
     """Resume a paused run from where it stopped.
 
     Looks up `.agentic/runs/<run-id>/` (8-char short prefix accepted),
@@ -477,8 +482,10 @@ def resume_cmd(run_id: str, client_name: str | None) -> None:
 
     console.print(f"[cyan]▶[/cyan] resume [bold]{state.run_id}[/bold] "
                   f"from agent index {state.current_agent_index}")
+    if feedback:
+        console.print(f"[dim]  with feedback:[/dim] {feedback}")
     try:
-        resume_run(chosen, workflow, client_config=client_cfg)
+        resume_run(chosen, workflow, client_config=client_cfg, feedback=feedback)
     except AgentFailure as e:
         console.print(f"[red]✗ run halted:[/red] {e}")
         sys.exit(1)

@@ -87,6 +87,37 @@ def test_resume_continues_past_pause(tmp_path: Path) -> None:
     assert types[-1] == "run.complete"
 
 
+def test_resume_with_feedback_records_event_and_input(tmp_path: Path) -> None:
+    """`agentic resume --feedback` (HITL) should record the feedback as a
+    `hitl.feedback` event and fold it into the run inputs so the next agent
+    can read it. This is the contract helm's client portal depends on."""
+    wf = _two_agent_wf(tmp_path)
+    ctx = RunContext.create(workflow_name=wf.name, target_repo_path=tmp_path,
+                            inputs={"task": "t"}, stub_mode=True)
+    run_workflow(wf, ctx)
+    assert RunState.load(ctx.working_dir).status == "paused"
+
+    resume_run(ctx.working_dir, wf, feedback="tighten the hero copy")
+    final = RunState.load(ctx.working_dir)
+    assert final.status == "succeeded"
+    assert final.inputs["hitl_feedback"] == "tighten the hero copy"
+
+    fb = [e for e in _events(ctx.working_dir) if e["type"] == "hitl.feedback"]
+    assert len(fb) == 1
+    assert fb[0]["payload"]["text"] == "tighten the hero copy"
+
+
+def test_resume_without_feedback_adds_no_event(tmp_path: Path) -> None:
+    wf = _two_agent_wf(tmp_path)
+    ctx = RunContext.create(workflow_name=wf.name, target_repo_path=tmp_path,
+                            inputs={"task": "t"}, stub_mode=True)
+    run_workflow(wf, ctx)
+    resume_run(ctx.working_dir, wf)
+    final = RunState.load(ctx.working_dir)
+    assert "hitl_feedback" not in final.inputs
+    assert not any(e["type"] == "hitl.feedback" for e in _events(ctx.working_dir))
+
+
 def test_resume_refuses_non_paused_run(tmp_path: Path) -> None:
     wf = _two_agent_wf(tmp_path, pause_after_first=False)
     ctx = RunContext.create(workflow_name=wf.name, target_repo_path=tmp_path,
