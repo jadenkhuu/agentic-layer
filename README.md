@@ -268,11 +268,12 @@ If you want to consume the stream from another tool, the schema is:
 ```
 
 Event types (the `AgenticEventType` enum in `src/agentic/events.py`):
-`run.start`, `run.complete`, `run.resume`, `agent.start`, `agent.complete`,
-`agent.fail`, `agent.pause`, `assistant.text`, `tool.use`, `tool.result`,
-`script.start`, `script.complete`, `ci.poll`, `ci.fix.start`,
+`run.start`, `run.complete`, `run.resume`, `run.fork`, `agent.start`,
+`agent.complete`, `agent.fail`, `agent.pause`, `assistant.text`, `tool.use`,
+`tool.result`, `script.start`, `script.complete`, `ci.poll`, `ci.fix.start`,
 `ci.fix.complete`, `ci.fix.fail`, `cost`. See `events.py` for the payload
-of each.
+of each. A forked run's events.jsonl opens with a `run.fork` event whose
+payload carries `forked_from` and `fork_step`.
 
 #### `cost` events
 
@@ -301,6 +302,7 @@ SDK call is made) so downstream consumers can be exercised offline.
 | `agentic list` | List workflows in `.agentic/workflows/`. |
 | `agentic watch [<run-id>] [--list]` | Open the run viewer TUI, or print the run table with `--list`. |
 | `agentic logs <run-id>` | Print `.agentic/runs/<run-id>/run.log`. |
+| `agentic fork <run-id> --step N [--task ...] [--input k=v]` | Copy a run's state + outputs of agents `[0, N)` into a fresh run, then resume from agent `N`. |
 | `agentic init` | Scaffold `.agentic/workflows/`, `.agentic/prompts/`, and `.agentic/.gitignore`. |
 
 ## Authoring a workflow

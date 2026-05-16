@@ -35,6 +35,9 @@ class AgenticEventType(str, Enum):
     RUN_START = "run.start"
     RUN_COMPLETE = "run.complete"
     RUN_RESUME = "run.resume"
+    # emitted by `agentic fork` into the new run's events.jsonl. payload:
+    # {workflow, agent_count, branch, stub_mode, forked_from, fork_step}
+    RUN_FORK = "run.fork"
     AGENT_START = "agent.start"
     AGENT_COMPLETE = "agent.complete"
     AGENT_FAIL = "agent.fail"
