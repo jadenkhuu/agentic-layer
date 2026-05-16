@@ -4,12 +4,22 @@ import json
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import click
 from rich.console import Console
 from rich.table import Table
 
+from agentic.archive import (
+    ARCHIVE_DIRNAME,
+    ArchiveError,
+    archive_run,
+    find_archivable,
+    humanize_age,
+    humanize_size,
+    parse_duration,
+)
 from agentic.auth import NoAuthConfigured
 from agentic.client_config import load_client
 from agentic.context import RunContext
@@ -478,6 +488,81 @@ def logs_cmd(run_id: str) -> None:
         console.print(f"[red]error:[/red] no log at {log_path}")
         sys.exit(2)
     console.print(log_path.read_text(), highlight=False)
+
+
+_ARCHIVE_HELP = """\
+Compress stale run directories into .agentic/runs/_archive/.
+
+\b
+Examples:
+  agentic archive --older-than 30d            # archive runs older than 30 days
+  agentic archive --older-than 30d --dry-run  # list what would be archived
+  agentic archive --older-than 2w             # units: s/m/h/d/w
+
+\b
+What happens:
+  1. Walks .agentic/runs/ for run dirs older than the threshold (age comes
+     from the run-id timestamp prefix).
+  2. Tarballs each into .agentic/runs/_archive/<run-id>.tar.zst (zstd).
+  3. Collapses the original run dir to a stub state.json carrying the run's
+     status plus an `archived_at` timestamp.
+
+Archival is lossless — the full run is recoverable from its tarball.
+Already-archived runs (stub state.json) and the _archive/ dir are skipped.
+"""
+
+
+@main.command("archive", context_settings=CONTEXT_SETTINGS, help=_ARCHIVE_HELP)
+@click.option("--older-than", "older_than", default="30d", show_default=True,
+              help="Archive runs at least this old. e.g. 30d, 12h, 2w.")
+@click.option("--dry-run", is_flag=True,
+              help="List what would be archived without writing anything.")
+def archive_cmd(older_than: str, dry_run: bool) -> None:
+    target = _target_repo()
+    runs_dir = target / ".agentic" / "runs"
+    if not runs_dir.exists():
+        console.print(f"[red]error:[/red] no runs directory at {runs_dir}")
+        sys.exit(2)
+
+    try:
+        threshold = parse_duration(older_than)
+    except ArchiveError as e:
+        console.print(f"[red]error:[/red] {e}")
+        sys.exit(2)
+
+    now = datetime.now(timezone.utc)
+    candidates = find_archivable(runs_dir, threshold, now)
+    if not candidates:
+        console.print(
+            f"[green]nothing to archive[/green] — no un-archived runs older than {older_than}"
+        )
+        return
+
+    verb = "would archive" if dry_run else "archiving"
+    table = Table(title=f"{verb} — runs older than {older_than}")
+    for col in ("run id", "age", "size"):
+        table.add_column(col)
+    for c in candidates:
+        table.add_row(c.run_id, humanize_age(c.age), humanize_size(c.size_bytes))
+    console.print(table)
+
+    if dry_run:
+        console.print(
+            f"[dim]dry run — {len(candidates)} run(s) would be archived; nothing written.[/dim]"
+        )
+        return
+
+    archive_dir = runs_dir / ARCHIVE_DIRNAME
+    archived = 0
+    for c in candidates:
+        try:
+            dest = archive_run(c.path, archive_dir, now)
+        except ArchiveError as e:
+            console.print(f"[red]✗ {c.run_id}:[/red] {e}")
+            continue
+        archived += 1
+        console.print(f"[green]✓[/green] {c.run_id} → {dest.relative_to(target)}")
+    console.print(f"[green]archived {archived}/{len(candidates)} run(s)[/green]")
 
 
 @main.command("init", context_settings=CONTEXT_SETTINGS)

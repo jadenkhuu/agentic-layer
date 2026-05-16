@@ -38,6 +38,9 @@ class RunState(BaseModel):
     total_tokens: int = 0
     total_cost_usd: float = 0.0
     per_agent_costs: dict[str, float] = Field(default_factory=dict)
+    # set by `agentic archive` when the run dir is collapsed to a stub; the
+    # full run then lives in .agentic/runs/_archive/<run-id>.tar.zst. ISO-8601.
+    archived_at: str | None = None
 
     def add_cost(
         self,
