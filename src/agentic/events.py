@@ -42,6 +42,10 @@ class AgenticEventType(str, Enum):
     AGENT_COMPLETE = "agent.complete"
     AGENT_FAIL = "agent.fail"
     AGENT_PAUSE = "agent.pause"
+    # human-in-the-loop feedback supplied when a paused run is resumed via
+    # `agentic resume --feedback`. payload: {text}. The same text is folded
+    # into the run's inputs as `hitl_feedback` so the next agent can read it.
+    HITL_FEEDBACK = "hitl.feedback"
     ASSISTANT_TEXT = "assistant.text"
     TOOL_USE = "tool.use"
     TOOL_RESULT = "tool.result"

@@ -235,6 +235,11 @@ def resume_run(
     ctx.events.emit("run.resume", from_agent_index=state.current_agent_index,
                     feedback=bool(feedback and feedback.strip()))
 
+    if feedback:
+        ctx.inputs["hitl_feedback"] = feedback
+        state.inputs["hitl_feedback"] = feedback
+        ctx.events.emit(AgenticEventType.HITL_FEEDBACK, text=feedback)
+
     state.status = "running"
     state.pause_reason = None  # no longer awaiting approval
     state.save(run_dir)
