@@ -1,0 +1,11 @@
+name: retrospective
+description: Single-agent workflow that reviews a finished run's event log and writes RETRO.md — what worked, what didn't, time and cost by agent, and concrete improvements. Run it standalone over a completed run, or copy its `retrospective` agent in as the final step of any workflow.
+
+agents:
+  - id: retrospective
+    prompt_file: prompts/retro.md
+    inputs: []
+    outputs: [RETRO.md]
+    allowed_tools: [Read, Write, Bash]
+    mcp_servers: []
+    sub_agents: []

@@ -103,7 +103,17 @@ def _run_stub(spec: AgentSpec, ctx: RunContext) -> None:
     for out in spec.outputs:
         path = ctx.working_dir / out
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(f"[stub] agent {spec.id} ran with inputs: {spec.inputs}\n")
+        if out == "RETRO.md":
+            # The retrospective agent (scaffold/workflows/retrospective.yaml)
+            # has no SDK round-trip to stub — instead build a real RETRO.md
+            # from the events.jsonl already written by the agents before it,
+            # so stub runs of a retro-bearing workflow produce a genuine
+            # report. Real runs let the prompt-driven SDK agent do this.
+            from agentic.retro import build_retro
+
+            path.write_text(build_retro(ctx.working_dir), encoding="utf-8")
+        else:
+            path.write_text(f"[stub] agent {spec.id} ran with inputs: {spec.inputs}\n")
         logger.info("agent %s wrote %s", spec.id, out)
 
     # Stub mode performs no SDK round-trip and therefore costs nothing — but

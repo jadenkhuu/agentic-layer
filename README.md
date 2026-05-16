@@ -4,8 +4,9 @@ Orchestrator for **Claude Agent SDK** workflows. A workflow is an ordered list
 of *agents* (each a `claude_agent_sdk.query()` invocation) that hand off to one
 another via files in a run-scoped working directory.
 
-Four workflows ship out of the box — `feature`, `bugfix`, `docs`, `designer` — and you
-can author your own (see [Authoring a workflow](#authoring-a-workflow)).
+Five workflows ship out of the box — `feature`, `bugfix`, `docs`, `designer`,
+`retrospective` — and you can author your own (see
+[Authoring a workflow](#authoring-a-workflow)).
 
 ## Install
 
@@ -219,6 +220,24 @@ Note: `direction` is intended as a human checkpoint — the YAML marks it
 so today the workflow runs straight through. To enforce the pause, halt
 the run after `direction`, mark a `[CHOSEN]` direction in `DIRECTIONS.md`,
 then resume.
+
+### `retrospective` — review a finished run
+
+One agent, `retrospective`, that reads a run's own `events.jsonl` +
+`state.json` and writes `RETRO.md`: what worked, what didn't, time by
+agent, cost by agent, and concrete improvements.
+
+```bash
+agentic run retrospective --stub      # retro this run's own (thin) log
+```
+
+It is most useful copied in as the **final agent of another workflow** —
+drop the `retrospective` agent block (`outputs: [RETRO.md]`) at the end of
+any workflow YAML and every run closes with a `RETRO.md` next to its
+outputs. The report is produced by `agentic.retro.build_retro`, a pure
+function over the event log: in `--stub` mode the orchestrator fills
+`RETRO.md` with it directly (no SDK call), and for real runs the bundled
+`prompts/retro.md` drives the agent over the same data.
 
 ## Watching a run
 
