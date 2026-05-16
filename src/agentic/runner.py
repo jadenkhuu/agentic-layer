@@ -156,16 +156,57 @@ def run_workflow(
 # ---------------------------------------------------------------------------
 
 
+_FEEDBACK_BLOCK = (
+    "## Operator feedback (sent back on resume)\n{body}\n\n---\n\n"
+)
+
+
+def _apply_resume_feedback(
+    workflow: Workflow, state: RunState, run_dir: Path, feedback: str
+) -> None:
+    """Prepend operator feedback to the next agent's primary task input.
+
+    The "next agent" is `workflow.agents[state.current_agent_index]` — the
+    one `resume` is about to run. Its first declared input is what it works
+    from: a kv value (e.g. `task`) or a file an earlier agent produced.
+    Feedback is prepended as a clearly delimited block so the agent reads
+    the correction before the original material. When the next agent
+    declares no inputs, feedback folds into the shared `task` kv input.
+    """
+    block = _FEEDBACK_BLOCK.format(body=feedback.strip())
+    idx = state.current_agent_index
+    agents = workflow.agents
+    next_spec = agents[idx] if idx < len(agents) else None
+    primary = next_spec.inputs[0] if (next_spec and next_spec.inputs) else "task"
+
+    if primary in state.inputs:
+        state.inputs[primary] = block + str(state.inputs[primary])
+        state.save(run_dir)
+        return
+    doc = run_dir / primary
+    if doc.exists():
+        doc.write_text(block + doc.read_text(encoding="utf-8"), encoding="utf-8")
+        return
+    # fallback: stash on the shared `task` kv input
+    state.inputs["task"] = block + str(state.inputs.get("task", ""))
+    state.save(run_dir)
+
+
 def resume_run(
     run_dir: Path,
     workflow: Workflow,
     *,
     client_config: ClientConfig | None = None,
+    feedback: str | None = None,
 ) -> RunContext:
     """Resume a paused run from the next agent.
 
     Reads state.json, reconstructs a RunContext pointing at the same
     working dir, and walks agents from current_agent_index.
+
+    `feedback` (the human-in-the-loop "send back" path) is prepended to the
+    next agent's primary task input before the run continues — see
+    `_apply_resume_feedback`.
     """
     state = RunState.load(run_dir)
     if state.status != "paused":
@@ -173,6 +214,8 @@ def resume_run(
             f"cannot resume run {state.run_id!r} with status={state.status!r}; "
             "expected 'paused'"
         )
+    if feedback and feedback.strip():
+        _apply_resume_feedback(workflow, state, run_dir, feedback)
     ctx = RunContext(
         run_id=state.run_id,
         workflow_name=state.workflow_name,
@@ -189,9 +232,11 @@ def resume_run(
         ctx.client_name = client_config.name
         ctx.client_prefix = client_config.as_system_prefix()
     ctx.events = EventEmitter(run_dir / "events.jsonl")
-    ctx.events.emit("run.resume", from_agent_index=state.current_agent_index)
+    ctx.events.emit("run.resume", from_agent_index=state.current_agent_index,
+                    feedback=bool(feedback and feedback.strip()))
 
     state.status = "running"
+    state.pause_reason = None  # no longer awaiting approval
     state.save(run_dir)
 
     start_t = time.monotonic()
@@ -349,15 +394,18 @@ def _walk_agents(workflow: Workflow, ctx: RunContext, *, start_index: int) -> No
 
         if spec.pause_after and index < len(workflow.agents) - 1:
             next_agent = workflow.agents[index + 1].id
+            reason = spec.pause_reason or (
+                f"Review {spec.id}'s output before continuing to {next_agent}."
+            )
             ctx.events.emit(
                 "agent.pause",
                 agent=spec.id,
                 agent_id=spec.id,
                 next_agent=next_agent,
-                reason="pause_after",
+                reason=reason,
             )
             _persist_state(workflow, ctx, status="paused",
-                           current_agent_index=index + 1)
+                           current_agent_index=index + 1, pause_reason=reason)
             raise RunPaused(run_id=ctx.run_id, working_dir=ctx.working_dir,
                             next_agent=next_agent)
 
@@ -630,8 +678,13 @@ def _persist_state(
     *,
     status: str,
     current_agent_index: int | None = None,
+    pause_reason: str | None = None,
 ) -> None:
-    """Write state.json reflecting the current point in the run."""
+    """Write state.json reflecting the current point in the run.
+
+    `pause_reason` is recorded only when `status == "paused"`; any other
+    status clears it so a resumed/finished run never carries a stale reason.
+    """
     state_path = ctx.working_dir / "state.json"
     if state_path.exists():
         state = RunState.load(ctx.working_dir)
@@ -646,6 +699,7 @@ def _persist_state(
     if current_agent_index is not None:
         state.current_agent_index = current_agent_index
     state.status = status  # type: ignore[assignment]
+    state.pause_reason = pause_reason if status == "paused" else None
     state.branch = ctx.branch
     state.base_branch = ctx.base_branch
     state.client = ctx.client_name

@@ -275,6 +275,15 @@ Event types (the `AgenticEventType` enum in `src/agentic/events.py`):
 of each. A forked run's events.jsonl opens with a `run.fork` event whose
 payload carries `forked_from` and `fork_step`.
 
+#### `agent.pause` events
+
+When an agent declares `pause_after: true`, the runner halts the run after
+it and writes an `agent.pause` event. Its payload carries the `next_agent`
+to run on resume and a human-readable `reason` — the agent's own
+`pause_reason` (when the workflow YAML sets one) or a generic message
+naming the agent. The same `reason` is mirrored onto `state.json` as
+`pause_reason` while `status == "paused"`, and cleared on resume.
+
 #### `cost` events
 
 One `cost` event is written after every SDK round-trip — i.e. once per
@@ -323,6 +332,8 @@ The PR number and URL are also folded onto `state.json` as `pr_number` /
 | `agentic watch [<run-id>] [--list]` | Open the run viewer TUI, or print the run table with `--list`. |
 | `agentic logs <run-id>` | Print `.agentic/runs/<run-id>/run.log`. |
 | `agentic fork <run-id> --step N [--task ...] [--input k=v]` | Copy a run's state + outputs of agents `[0, N)` into a fresh run, then resume from agent `N`. |
+| `agentic resume <run-id> [--feedback ...] [--client ...]` | Resume a paused run from the next agent. `--feedback` prepends an operator correction to that agent's task (the human-in-the-loop send-back path). |
+| `agentic abort <run-id>` | Mark a paused or running run aborted. Idempotent for terminal runs. |
 | `agentic init` | Scaffold `.agentic/workflows/`, `.agentic/prompts/`, and `.agentic/.gitignore`. |
 
 ## Authoring a workflow

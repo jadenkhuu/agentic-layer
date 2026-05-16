@@ -32,6 +32,10 @@ class RunState(BaseModel):
     fix_attempts: int = 0
     completed_agents: list[str] = Field(default_factory=list)
     stub_mode: bool = False
+    # human-readable reason a paused run is awaiting approval. Set when an
+    # agent with pause_after halts the run, cleared on resume. None unless
+    # status == "paused". Defaults keep pre-Phase-5 state.json files loadable.
+    pause_reason: str | None = None
     # cost aggregates — folded in by the runner after each agent (see
     # runner._record_agent_cost). Defaults keep pre-Phase-1 state.json
     # files loadable.
@@ -43,6 +47,9 @@ class RunState(BaseModel):
     # over). Defaults keep pre-fork state.json files loadable.
     forked_from: str | None = None
     fork_step: int | None = None
+    # ISO-8601 timestamp set by `agentic archive` once a run's events.jsonl
+    # is tarred away; the stub state.json keeps it. None for live runs.
+    archived_at: str | None = None
 
     def add_cost(
         self,
