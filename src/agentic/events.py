@@ -62,6 +62,10 @@ class AgenticEventType(str, Enum):
     # run sync to fire a Vercel preview deploy. payload:
     # {branch, base_branch, pr_number, pr_url, sha, target_repo}
     DEPLOY_TRIGGER = "deploy.trigger"
+    # emitted once at the end of a successful run when the memory writer
+    # saved a run summary to the helm studio docs tree. payload:
+    # {path, size_bytes, summary_preview}
+    MEMORY_WRITTEN = "memory.written"
 
 TOOL_INPUT_MAX = 500
 TOOL_RESULT_MAX = 1000
