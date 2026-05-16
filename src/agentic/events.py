@@ -6,12 +6,10 @@ Each event is a single JSON line in `<run-dir>/events.jsonl`:
      "payload": {...}}
 
 The schema is the contract between the orchestrator (which emits) and the
-watch TUI (which tails and renders). Keep it stable; if a field must
-change, add — don't rename or remove.
+consumers (the watch TUI, helm's run sync). Keep it stable; if a field
+must change, add — don't rename or remove.
 
-Event types: run.start, run.complete, agent.start, agent.complete,
-agent.fail, tool.use, tool.result, assistant.text.
-
+The closed set of `type` values is enumerated by `AgenticEventType` below.
 See README "Watching a run" for the payload of each.
 """
 from __future__ import annotations
@@ -19,10 +17,40 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+class AgenticEventType(str, Enum):
+    """Every `type` value the orchestrator writes to events.jsonl.
+
+    A `str` enum so members JSON-serialise as their value and consumers can
+    switch exhaustively. `EventEmitter.emit` accepts either a member or a
+    raw string, so unknown/forward-compat types are still permitted.
+    """
+
+    RUN_START = "run.start"
+    RUN_COMPLETE = "run.complete"
+    RUN_RESUME = "run.resume"
+    AGENT_START = "agent.start"
+    AGENT_COMPLETE = "agent.complete"
+    AGENT_FAIL = "agent.fail"
+    AGENT_PAUSE = "agent.pause"
+    ASSISTANT_TEXT = "assistant.text"
+    TOOL_USE = "tool.use"
+    TOOL_RESULT = "tool.result"
+    SCRIPT_START = "script.start"
+    SCRIPT_COMPLETE = "script.complete"
+    CI_POLL = "ci.poll"
+    CI_FIX_START = "ci.fix.start"
+    CI_FIX_COMPLETE = "ci.fix.complete"
+    CI_FIX_FAIL = "ci.fix.fail"
+    # one per SDK round-trip — token usage + estimated USD cost. payload:
+    # {model, input_tokens, output_tokens, cache_read, cache_creation, cost_usd}
+    COST = "cost"
 
 TOOL_INPUT_MAX = 500
 TOOL_RESULT_MAX = 1000
@@ -77,12 +105,18 @@ class EventEmitter:
         if self.path is not None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
 
-    def emit(self, event_type: str, *, agent: str | None = None, **payload: Any) -> None:
+    def emit(
+        self,
+        event_type: "str | AgenticEventType",
+        *,
+        agent: str | None = None,
+        **payload: Any,
+    ) -> None:
         if self.path is None:
             return
         record = {
             "ts": _now_iso(),
-            "type": event_type,
+            "type": event_type.value if isinstance(event_type, AgenticEventType) else event_type,
             "agent": agent,
             "payload": payload,
         }
@@ -96,3 +130,31 @@ class EventEmitter:
         except Exception as e:  # never let observability break a run
             logger.warning("event emit failed (type=%s agent=%s): %s",
                            event_type, agent, e)
+
+    def emit_cost(
+        self,
+        *,
+        agent: str | None,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        cache_read: int = 0,
+        cache_creation: int = 0,
+        cost_usd: float,
+    ) -> None:
+        """Emit a `cost` event for one SDK round-trip.
+
+        The payload shape is the cost contract consumed by helm's run sync;
+        keep the field names stable. Callers stay terse — `agent.py` hands
+        this the SDK usage numbers and an already-resolved `cost_usd`.
+        """
+        self.emit(
+            AgenticEventType.COST,
+            agent=agent,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read=cache_read,
+            cache_creation=cache_creation,
+            cost_usd=round(cost_usd, 6),
+        )

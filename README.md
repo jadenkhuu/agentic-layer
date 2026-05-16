@@ -267,9 +267,31 @@ If you want to consume the stream from another tool, the schema is:
 {"ts": "2026-05-12T09:32:15.123Z", "type": "<type>", "agent": "<id|null>", "payload": {...}}
 ```
 
-Event types: `run.start`, `run.complete`, `agent.start`, `agent.complete`,
-`agent.fail`, `tool.use`, `tool.result`, `assistant.text`. See
-`src/agentic/events.py` for the payload of each.
+Event types (the `AgenticEventType` enum in `src/agentic/events.py`):
+`run.start`, `run.complete`, `run.resume`, `agent.start`, `agent.complete`,
+`agent.fail`, `agent.pause`, `assistant.text`, `tool.use`, `tool.result`,
+`script.start`, `script.complete`, `ci.poll`, `ci.fix.start`,
+`ci.fix.complete`, `ci.fix.fail`, `cost`. See `events.py` for the payload
+of each.
+
+#### `cost` events
+
+One `cost` event is written after every SDK round-trip — i.e. once per
+agent. Its payload reports token usage and the round-trip's USD cost:
+
+```jsonl
+{"ts": "...", "type": "cost", "agent": "planner", "payload": {
+  "model": "claude-sonnet-4-6",
+  "input_tokens": 1840, "output_tokens": 612,
+  "cache_read": 12030, "cache_creation": 410,
+  "cost_usd": 0.021734}}
+```
+
+`cost_usd` is the SDK's own `total_cost_usd` when it reports one, else an
+estimate from the price table in `src/agentic/pricing.py`. The runner folds
+each `cost` event into `state.json` as `total_tokens`, `total_cost_usd`, and
+`per_agent_costs`. In `--stub` mode a zero-cost event is still emitted (no
+SDK call is made) so downstream consumers can be exercised offline.
 
 ## CLI
 

@@ -32,6 +32,27 @@ class RunState(BaseModel):
     fix_attempts: int = 0
     completed_agents: list[str] = Field(default_factory=list)
     stub_mode: bool = False
+    # cost aggregates — folded in by the runner after each agent (see
+    # runner._record_agent_cost). Defaults keep pre-Phase-1 state.json
+    # files loadable.
+    total_tokens: int = 0
+    total_cost_usd: float = 0.0
+    per_agent_costs: dict[str, float] = Field(default_factory=dict)
+
+    def add_cost(
+        self,
+        *,
+        agent: str,
+        input_tokens: int,
+        output_tokens: int,
+        cost_usd: float,
+    ) -> None:
+        """Fold one agent's SDK usage into the run-level cost aggregates."""
+        self.total_tokens += input_tokens + output_tokens
+        self.total_cost_usd = round(self.total_cost_usd + cost_usd, 6)
+        self.per_agent_costs[agent] = round(
+            self.per_agent_costs.get(agent, 0.0) + cost_usd, 6
+        )
 
     @classmethod
     def path_for(cls, run_dir: Path) -> Path:

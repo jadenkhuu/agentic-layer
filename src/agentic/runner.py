@@ -247,6 +247,7 @@ def _walk_agents(workflow: Workflow, ctx: RunContext, *, start_index: int) -> No
             _run_phase_script(spec.pre, "pre", index, ctx, agent_id=spec.id)
 
         _run_one(spec, ctx)
+        _record_agent_cost(ctx)
 
         if spec.post:
             _run_phase_script(spec.post, "post", index, ctx, agent_id=spec.id)
@@ -439,6 +440,34 @@ def _maybe_prepare_branch(ctx: RunContext) -> None:
     )
     ctx.branch = branch
     logger.info("run %s :: created branch %s", ctx.run_id, branch)
+
+
+def _record_agent_cost(ctx: RunContext) -> None:
+    """Fold the just-finished agent's cost into the persisted RunState.
+
+    agent.py stashes the cost on `ctx.last_agent_cost`; we load state.json,
+    aggregate, save, and clear the hand-off. Best-effort — a run with no
+    state.json yet (some unit-test paths) is silently skipped, and the cost
+    aggregates are non-critical to the run completing.
+    """
+    cost = ctx.last_agent_cost
+    if not cost:
+        return
+    if not RunState.path_for(ctx.working_dir).exists():
+        return
+    try:
+        state = RunState.load(ctx.working_dir)
+        state.add_cost(
+            agent=str(cost["agent"]),
+            input_tokens=int(cost["input_tokens"]),
+            output_tokens=int(cost["output_tokens"]),
+            cost_usd=float(cost["cost_usd"]),
+        )
+        state.save(ctx.working_dir)
+    except Exception as e:  # cost accounting must never halt a run
+        logger.warning("run %s :: failed to record agent cost: %s", ctx.run_id, e)
+    finally:
+        ctx.last_agent_cost = None
 
 
 def _persist_state(

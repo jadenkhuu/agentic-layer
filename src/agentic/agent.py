@@ -12,6 +12,7 @@ from rich.console import Console
 from agentic.context import RunContext
 from agentic.events import serialize_tool_input, serialize_tool_result
 from agentic.mcp import resolve_for_agent
+from agentic.pricing import cost_usd
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -40,6 +41,8 @@ def run_agent(spec: AgentSpec, ctx: RunContext) -> None:
     """Execute a single agent (sync wrapper)."""
     logger.info("agent %s start", spec.id)
     start_t = time.monotonic()
+    # cleared here, set by _run_stub / _run_real, consumed by the runner.
+    ctx.last_agent_cost = None
     ctx.events.emit(
         "agent.start",
         agent=spec.id,
@@ -99,6 +102,23 @@ def _run_stub(spec: AgentSpec, ctx: RunContext) -> None:
         path.write_text(f"[stub] agent {spec.id} ran with inputs: {spec.inputs}\n")
         logger.info("agent %s wrote %s", spec.id, out)
 
+    # Stub mode performs no SDK round-trip and therefore costs nothing — but
+    # still emit a zero-cost event so the cost pipeline (events.jsonl ->
+    # RunState -> helm sync) is exercisable end to end without a real run.
+    ctx.events.emit_cost(
+        agent=spec.id,
+        model="stub",
+        input_tokens=0,
+        output_tokens=0,
+        cost_usd=0.0,
+    )
+    ctx.last_agent_cost = {
+        "agent": spec.id,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cost_usd": 0.0,
+    }
+
 
 # ---------------------------------------------------------------------------
 # Real Claude-Agent-SDK path
@@ -144,8 +164,10 @@ async def _run_real(spec: AgentSpec, ctx: RunContext) -> None:
     )
     logger.debug("agent %s :: prompt:\n%s", spec.id, prompt_text)
 
+    last_model = ""
     async for message in query(prompt=prompt_text, options=options):
         if isinstance(message, AssistantMessage):
+            last_model = getattr(message, "model", "") or last_model
             for block in message.content:
                 if isinstance(block, TextBlock):
                     logger.debug("agent %s :: assistant text: %s", spec.id, block.text)
@@ -175,6 +197,51 @@ async def _run_real(spec: AgentSpec, ctx: RunContext) -> None:
                     f"agent {spec.id}: SDK reported error "
                     f"(stop_reason={message.stop_reason})"
                 )
+            _record_sdk_cost(spec, ctx, message, last_model)
+
+
+def _record_sdk_cost(
+    spec: AgentSpec, ctx: RunContext, message: Any, model: str
+) -> None:
+    """Translate an SDK ResultMessage's usage into a `cost` event + a
+    `ctx.last_agent_cost` hand-off for the runner to fold into RunState.
+
+    The SDK's own `total_cost_usd` is authoritative when present; otherwise
+    we estimate from the price table. Never raises — a missing/odd usage
+    payload degrades to a zero-cost event.
+    """
+    usage = getattr(message, "usage", None) or {}
+    try:
+        input_tokens = int(usage.get("input_tokens", 0) or 0)
+        output_tokens = int(usage.get("output_tokens", 0) or 0)
+        cache_read = int(usage.get("cache_read_input_tokens", 0) or 0)
+        cache_creation = int(usage.get("cache_creation_input_tokens", 0) or 0)
+    except (TypeError, ValueError, AttributeError):
+        input_tokens = output_tokens = cache_read = cache_creation = 0
+
+    model = model or "unknown"
+    sdk_cost = getattr(message, "total_cost_usd", None)
+    cost = (
+        float(sdk_cost)
+        if sdk_cost is not None
+        else cost_usd(model, input_tokens, output_tokens, cache_read, cache_creation)
+    )
+
+    ctx.events.emit_cost(
+        agent=spec.id,
+        model=model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read=cache_read,
+        cache_creation=cache_creation,
+        cost_usd=cost,
+    )
+    ctx.last_agent_cost = {
+        "agent": spec.id,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cost_usd": round(cost, 6),
+    }
 
 
 def _resolve_mcp_for_agent(spec: AgentSpec, ctx: RunContext) -> dict[str, Any]:
